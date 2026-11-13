@@ -19,7 +19,10 @@ mod("homeassistant"); mod("homeassistant.components"); mod("homeassistant.helper
 published = []
 subs = {}
 async def async_subscribe(hass, topic, cb, qos=0, encoding="utf-8"): subs[topic] = cb; return lambda: None
-async def async_publish(hass, topic, payload, qos=0, retain=False): published.append(payload); await DEV(payload)
+retained = []
+async def async_publish(hass, topic, payload, qos=0, retain=False):
+    if topic != "dr164/down": retained.append((topic, payload, retain)); return
+    published.append(payload); await DEV(payload)
 mod("homeassistant.components.mqtt", async_subscribe=async_subscribe, async_publish=async_publish)
 sys.modules["homeassistant.components"].mqtt = sys.modules["homeassistant.components.mqtt"]
 mod("homeassistant.config_entries", ConfigEntry=_Base, ConfigFlow=type("CF", (), {"__init_subclass__": classmethod(lambda cls, **k: None)}), OptionsFlow=_Base)
@@ -233,6 +236,19 @@ async def main():
     assert "tussenstand" in wk[1] and "Compressor:" in wk[2], wk
     assert c.last_week["titel"] and "kamers" in c.last_week
     print("     weekrapport:", wk[1]); print("     " + wk[2].replace("\n", "\n     "))
+
+    # ---- oude MQTT-discovery opruimen (alleen dewarmte_* van de oude app)
+    async def _clean():
+        return await c.async_cleanup_old_discovery(wait=0.05)
+    task = asyncio.ensure_future(_clean()); await asyncio.sleep(0.01)
+    M = types.SimpleNamespace
+    cb = subs["homeassistant/#"]
+    cb(M(topic="homeassistant/sensor/dhw_2_22_16_x/config", retain=True,
+         payload='{"unique_id": "dewarmte_dhw_2_22_16_x", "state_topic": "dewarmte/dhw_2/x/state", "availability_topic": "dewarmte/bridge/availability"}'))
+    cb(M(topic="homeassistant/sensor/ander/config", retain=True, payload='{"unique_id": "iets_anders"}'))
+    assert await task == 3
+    assert sorted(t for t, p, r in retained if p == "" and r) == ["dewarmte/bridge/availability",
+        "dewarmte/dhw_2/x/state", "homeassistant/sensor/dhw_2_22_16_x/config"], retained
 
     # ---- dashboard: elke verwijzing moet naar een echte entiteit wijzen
     ids = {("sensor", d.key) for d in sens.SENSORS + sens.EXTRA} | {("binary_sensor", d.key) for d in binm.BINARIES}

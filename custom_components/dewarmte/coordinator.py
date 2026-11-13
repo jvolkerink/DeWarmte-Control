@@ -1,6 +1,8 @@
 """Coördinator: pollt Modbus, draait de engine, voert toegestane writes uit en maakt het uurrapport."""
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import time
 from datetime import timedelta
@@ -99,6 +101,45 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
             self.hass, self.cfg[CONF_UP_TOPIC], self._on_message, 0, encoding=None)
         self._unsub_time = async_track_time_change(self.hass, self._on_hour, minute=0, second=15)
         self._unsub_week = async_track_time_change(self.hass, self._on_week, hour=19, minute=0, second=30)
+        start_bg = getattr(self.hass, "async_create_background_task", None)
+        if start_bg:
+            start_bg(self.async_cleanup_old_discovery(), "dewarmte_mqtt_opruimen")
+
+    async def async_cleanup_old_discovery(self, wait: float = 15.0) -> int:
+        """Wist achtergebleven (retained) MQTT-discovery van de oude DeWarmte-app.
+
+        Alleen berichten met unique_id 'dewarmte_…' én een availability_topic onder 'dewarmte/' worden
+        gewist, plus de bijbehorende state-topics. Andere MQTT-apparaten blijven onaangeroerd.
+        """
+        found: set[str] = set()
+
+        @callback
+        def _msg(msg) -> None:
+            if not getattr(msg, "retain", False) or not msg.payload:
+                return
+            try:
+                data = json.loads(msg.payload)
+            except (TypeError, ValueError):
+                return
+            if (isinstance(data, dict) and str(data.get("unique_id", "")).startswith("dewarmte_")
+                    and str(data.get("availability_topic", "")).startswith("dewarmte/")):
+                found.add(msg.topic)
+                for key in ("state_topic", "command_topic", "availability_topic"):
+                    if str(data.get(key, "")).startswith("dewarmte/"):
+                        found.add(data[key])
+
+        try:
+            unsub = await mqtt.async_subscribe(self.hass, "homeassistant/#", _msg, 0)
+        except Exception as err:  # noqa: BLE001 - opruimen is optioneel
+            _LOGGER.debug("Opruimen oude MQTT-discovery overgeslagen: %s", err)
+            return 0
+        await asyncio.sleep(wait)
+        unsub()
+        for topic in sorted(found):
+            await mqtt.async_publish(self.hass, topic, "", qos=0, retain=True)
+        if found:
+            _LOGGER.warning("Oude MQTT-discovery van de DeWarmte-app gewist: %d topics", len(found))
+        return len(found)
 
     async def async_shutdown(self) -> None:
         for unsub in (self._unsub, self._unsub_time, self._unsub_week):

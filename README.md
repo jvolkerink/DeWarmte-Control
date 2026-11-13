@@ -174,3 +174,9 @@ Sensor *Tapwaterplanning* laat zien wat er geleerd is en wat er gepland staat. O
 **Pendelbewaking**: sensoren *Compressorstarts laatste uur* en *vandaag* (een stop korter dan 60 s telt niet),
 grafiek per uur op het tabblad *Week* en een samenvatting in het weekrapport (waarschuwing bij ≥ 7 uur met
 meer dan 3 starts in een week).
+
+## Nieuw in 3.5.1: oude MQTT-discovery automatisch opruimen
+Bij elke start luistert de integratie 15 seconden naar `homeassistant/#` en wist ze retained discovery-berichten
+van de oude DeWarmte-app (unique_id `dewarmte_…` met availability onder `dewarmte/`), plus hun state-topics.
+Andere MQTT-apparaten worden niet aangeraakt. Daarmee verdwijnen de honderden foutmeldingen
+"Entity category 'config' is not supported" uit het logboek.
