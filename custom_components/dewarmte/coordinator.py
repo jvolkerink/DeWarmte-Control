@@ -1,0 +1,426 @@
+"""Coördinator: pollt Modbus, draait de engine, voert toegestane writes uit en maakt het uurrapport."""
+from __future__ import annotations
+
+import logging
+import time
+from datetime import timedelta
+from typing import Any
+
+from homeassistant.components import mqtt
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.components import persistent_notification
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.storage import Store
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
+from . import registers as R
+from .bus import ModbusBus, ModbusError, ModbusTimeout, read_registers
+from .const import (CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_OUTDOOR, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
+                    CONF_UP_TOPIC, DOMAIN)
+from .engine import Engine, Inputs, Room, Settings
+from .obslog import ObsLog
+from .report import HourReport
+from .writes import WriteGuard
+
+HARD_BLOCKS = ("kritieke Modbus-data niet vers", "storing actief", "ontdooien actief")
+
+_LOGGER = logging.getLogger(__name__)
+SLAVE_NAMES = {1: "SunRain (pomp AO)", 2: "Pomp T", 5: "Meter pomp AO", 7: "Meter pomp T",
+               14: "Warmtemeter AO", 16: "Warmtemeter T"}
+
+
+def _f(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        super().__init__(hass, _LOGGER, name=DOMAIN, config_entry=entry,
+                         update_interval=timedelta(seconds=R.FAST))
+        self.entry = entry
+        self.cfg = {**entry.data, **entry.options}
+        self.settings = Settings.from_dict(self.cfg)
+        self.engine = Engine(self.settings)
+        self.bus = ModbusBus(self._send)
+        self._raw: dict[tuple[int, int], tuple[int, float]] = {}
+        self._sched = {(b.slave, b.start, b.count): {"next": 0.0, "fails": 0, "err": None, "ok": None}
+                       for b in R.BLOCKS}
+        self._store = Store(hass, 1, f"{DOMAIN}.state")
+        self._unsub = None
+        self._saved: dict | None = None
+        self._last_summary: str | None = None
+        self._last_obs = 0.0
+        self._obs = ObsLog(hass.config.path("dewarmte"))
+        self.guard = WriteGuard()
+        self.control_enabled = True          # standaard aan; keuze wordt bewaard
+        self.trip_reason: str | None = None
+        self.report = HourReport()
+        self.last_report: dict = {"titel": None, "tekst": None}
+        self.actions: list[dict] = []        # laatste 30 acties
+        self._unsub_time = None
+        self._last_values: dict = {}
+        self._last_decision: dict = {}
+        self.service_until = 0.0             # monotonic; servicemodus aan zolang now < service_until
+        self.disinfect: dict | None = None   # actieve handmatige desinfectie
+
+    # ------------------------------------------------------------ levenscyclus
+    async def async_setup(self) -> None:
+        stored = await self._store.async_load() or {}
+        self.engine = Engine(self.settings, stored)
+        self.control_enabled = bool(stored.get("control_enabled", True))
+        self._unsub = await mqtt.async_subscribe(
+            self.hass, self.cfg[CONF_UP_TOPIC], self._on_message, 0, encoding=None)
+        self._unsub_time = async_track_time_change(self.hass, self._on_hour, minute=0, second=15)
+
+    async def async_shutdown(self) -> None:
+        for unsub in (self._unsub, self._unsub_time):
+            if unsub:
+                unsub()
+        self._unsub = self._unsub_time = None
+        await self._store.async_save(self._state())
+        await super().async_shutdown()
+
+    @callback
+    def _on_message(self, msg) -> None:
+        payload = msg.payload
+        self.bus.feed(payload.encode("latin-1") if isinstance(payload, str) else bytes(payload))
+
+    async def _send(self, frame: bytes) -> None:
+        await mqtt.async_publish(self.hass, self.cfg[CONF_DOWN_TOPIC], frame, qos=0, retain=False)
+
+    def _state(self) -> dict:
+        return {**self.engine.export_state(), "control_enabled": self.control_enabled}
+
+    async def async_set_control(self, enabled: bool, reason: str | None = None) -> None:
+        self.control_enabled = enabled
+        self.trip_reason = None if enabled else reason
+        if enabled:
+            self.guard.failures = 0
+        await self._store.async_save(self._state())
+        _LOGGER.warning("Regeling %s%s", "AAN" if enabled else "UIT", f": {reason}" if reason else "")
+        self.async_update_listeners()
+
+    # ------------------------------------------------------------ schrijven
+    async def _execute(self, decision: dict) -> None:
+        hard = [b for b in decision["blocks"] if b in HARD_BLOCKS]
+        if not self.control_enabled or hard:
+            return
+        now = time.monotonic()
+        for p in decision["planned_writes"]:
+            if self.disinfect and (p["slave"], p["register"]) == (2, 6):
+                continue                                                   # desinfectie heeft voorrang
+            slave, reg, value = p["slave"], p["register"], int(p["value"])
+            why = self.guard.check(slave, reg, value, now)
+            if why:
+                self.report.refuse(p["name"], why)
+                continue
+            item = {"time": time.strftime("%H:%M"), "name": p["name"], "register": f"{slave}/{reg}",
+                    "old": self._txt(p, p["current"]), "new": p["value_text"], "why": p.get("note") or self._why(p, decision),
+                    "ok": False, "error": None}
+            try:
+                await self.bus.write_single(slave, reg, value)
+                item["ok"] = True
+                self._raw[(slave, reg)] = (value, time.monotonic())       # echo bevestigd
+                for key, st in self._sched.items():                        # blok direct opnieuw lezen
+                    if key[0] == slave and key[1] <= reg < key[1] + key[2]:
+                        st["next"] = 0.0
+            except ModbusError as err:
+                item["error"] = str(err)
+            self.guard.record(slave, reg, now, item["ok"])
+            self.report.action(item)
+            self.actions = (self.actions + [item])[-30:]
+            _LOGGER.info("Schrijfactie %s %s → %s: %s", item["name"], item["old"], item["new"],
+                         "OK" if item["ok"] else item["error"])
+            if self.guard.tripped:
+                await self.async_set_control(False, f"{self.guard.failures} schrijfacties achter elkaar mislukt")
+                persistent_notification.async_create(
+                    self.hass, f"De regeling is uitgeschakeld: schrijven mislukt ({item['error']}). "
+                    "Controleer de DR164/RS485 en zet de schakelaar 'Regeling actief' weer aan.",
+                    title="DeWarmte: regeling gestopt", notification_id="dewarmte_storing")
+                await self._notify("DeWarmte: regeling gestopt", f"Schrijven mislukt: {item['error']}")
+                return
+
+    @staticmethod
+    def _txt(p: dict, cur) -> str:
+        if cur is None:
+            return "?"
+        if p["register"] == 773:
+            return "aan" if cur else "uit"
+        if p["register"] == 775:
+            return {0: "Normaal", 1: "Boost", 2: "Stil"}.get(int(cur), str(cur))
+        return f"{int(cur)} °C"
+
+    @staticmethod
+    def _why(p: dict, d: dict) -> str:
+        if p["register"] == 775:
+            return d.get("power_mode_reason", "")
+        if p["register"] == 773:
+            if p["value"]:
+                return "bronondersteuning Pomp T" if d.get("source_support") else (
+                    "warmtevraag" if d.get("heat_demand") else "basislast")
+            return "geen warmtevraag"
+        if p["register"] == 769:
+            src = "warmtevraag" if d.get("heat_demand") else ("basislast" if d.get("base_load") else "bronondersteuning")
+            return (f"{src}: stooklijn {d.get('base_curve')} + preset {d.get('feedforward')} + klep {d.get('trim')}"
+                    f" + offset {d.get('offset')} ({d.get('trim_reason')})")
+        return ""
+
+    # ------------------------------------------------------------ directe writes (service, desinfectie)
+    async def _write_now(self, slave: int, reg: int, value: int, name: str, old, new: str, why: str,
+                         service: bool = False) -> dict:
+        item = {"time": time.strftime("%H:%M"), "name": name, "register": f"{slave}/{reg}", "old": old,
+                "new": new, "why": why, "ok": False, "error": None}
+        try:
+            await self.bus.write_single(slave, reg, value, service=service)
+            item["ok"] = True
+            self._raw[(slave, reg)] = (value & 0xFFFF, time.monotonic())
+            for key, st in self._sched.items():
+                if key[0] == slave and key[1] <= reg < key[1] + key[2]:
+                    st["next"] = 0.0
+        except ModbusError as err:
+            item["error"] = str(err)
+        if not service:
+            self.guard.record(slave, reg, time.monotonic(), item["ok"])
+        self.report.action(item)
+        self.actions = (self.actions + [item])[-30:]
+        _LOGGER.info("%s %s: %s → %s: %s", "Service" if service else "Schrijfactie", name, old, new,
+                     "OK" if item["ok"] else item["error"])
+        return item
+
+    # ------------------------------------------------------------ servicemodus
+    @property
+    def service_mode(self) -> bool:
+        return time.monotonic() < self.service_until
+
+    def set_service_mode(self, on: bool) -> None:
+        self.service_until = time.monotonic() + 1800 if on else 0.0
+        _LOGGER.warning("Servicemodus %s", "AAN (30 min)" if on else "UIT")
+        self.async_update_listeners()
+
+    async def async_service_write(self, slave: int, reg: int, value: int, name: str) -> None:
+        from homeassistant.exceptions import HomeAssistantError  # noqa: PLC0415
+        if not self.service_mode:
+            raise HomeAssistantError("Zet eerst de schakelaar 'Servicemodus' aan.")
+        if not self._status().get(slave, {}).get("ok"):
+            raise HomeAssistantError(f"Geen verse Modbus-data van slave {slave}; wijziging niet verstuurd.")
+        old = self._raw.get((slave, reg), (None,))[0]
+        if old is not None and old >= 0x8000 and value < 0:
+            old -= 0x10000
+        item = await self._write_now(slave, reg, value, f"[service] {name}", old, str(value), "handmatig", service=True)
+        self.service_until = max(self.service_until, time.monotonic() + 600)   # na een wijziging nog ≥ 10 min open
+        await self.hass.async_add_executor_job(self._obs.service_log, {**item, "datum": time.strftime("%Y-%m-%d")})
+        self.async_update_listeners()
+        if not item["ok"]:
+            raise HomeAssistantError(f"Schrijven mislukt: {item['error']}")
+
+    # ------------------------------------------------------------ handmatige desinfectie
+    async def async_start_disinfection(self) -> None:
+        if self.disinfect:
+            return
+        v = self._last_values.get("raw", {})
+        target = int(min(70, max(60, v.get("r2_10") or 60)))
+        hold = int(min(90, max(10, v.get("r2_11") or 30)))
+        prev = self._last_values.get("pt_set")
+        item = await self._write_now(2, 6, target, "desinfectie gestart", "?" if prev is None else f"{int(prev)} °C",
+                                     f"{target} °C", f"vasthouden {hold} min, alleen warmtepomp")
+        if not item["ok"]:
+            await self._notify_both("DeWarmte: desinfectie niet gestart", f"Schrijven mislukt: {item['error']}")
+            return
+        self.disinfect = {"phase": "opwarmen", "target": target, "hold": hold, "start": time.monotonic(),
+                          "reached": None, "max_top": None, "started": time.strftime("%H:%M")}
+        grid = v.get("r2_25")
+        warn = f" Let op: 'Set temperature when powered by grid' (reg 25) staat op {int(grid)} °C." if grid and grid < target else ""
+        await self._notify_both("DeWarmte: desinfectie gestart",
+                                f"Pomp T warmt op tot {target} °C en houdt dat {hold} min vast (zonder element).{warn}")
+        self.async_update_listeners()
+
+    async def async_stop_disinfection(self, reason: str = "handmatig gestopt", ok: bool = False) -> None:
+        dis, self.disinfect = self.disinfect, None
+        if not dis:
+            return
+        back = self._last_decision.get("dhw_setpoint_advice") or 45
+        await self._write_now(2, 6, int(back), "desinfectie klaar" if ok else "desinfectie gestopt",
+                              f"{dis['target']} °C", f"{int(back)} °C", reason)
+        top = dis["max_top"]
+        await self._notify_both("DeWarmte: desinfectie " + ("geslaagd" if ok else "gestopt"),
+                                f"{reason}. Hoogste temperatuur boven in de boiler: "
+                                f"{'–' if top is None else f'{top:.0f} °C'}. Setpoint terug naar {int(back)} °C.")
+        self.async_update_listeners()
+
+    async def _disinfect_step(self, v: dict) -> None:
+        d = self.disinfect
+        if not d:
+            return
+        now, top = time.monotonic(), v.get("dhw_top")
+        if top is not None:
+            d["max_top"] = top if d["max_top"] is None else max(d["max_top"], top)
+        if d["phase"] == "opwarmen" and top is not None and top >= d["target"] - 1:
+            d["phase"], d["reached"] = "vasthouden", now
+        if d["phase"] == "vasthouden" and now - d["reached"] >= d["hold"] * 60:
+            await self.async_stop_disinfection(f"{d['target']} °C {d['hold']} min vastgehouden", ok=True)
+        elif d["phase"] == "opwarmen" and now - d["start"] > 4 * 3600:
+            await self.async_stop_disinfection(f"{d['target']} °C niet gehaald binnen 4 uur")
+
+    def disinfect_text(self) -> str:
+        d = self.disinfect
+        if not d:
+            return "uit"
+        if d["phase"] == "vasthouden":
+            left = max(0, d["hold"] - (time.monotonic() - d["reached"]) / 60)
+            return f"vasthouden {d['target']} °C, nog {left:.0f} min"
+        return f"opwarmen naar {d['target']} °C (gestart {d['started']})"
+
+    async def _notify_both(self, title: str, message: str) -> None:
+        persistent_notification.async_create(self.hass, message, title=title, notification_id="dewarmte_desinfectie")
+        await self._notify(title, message)
+
+    # ------------------------------------------------------------ uurrapport
+    async def _notify(self, title: str, message: str) -> None:
+        svc = (self.cfg.get(CONF_NOTIFY) or "").strip().removeprefix("notify.")
+        if not svc:
+            return
+        try:
+            await self.hass.services.async_call("notify", svc, {"title": title, "message": message}, blocking=False)
+        except Exception as err:  # noqa: BLE001 - een melding mag de regeling nooit stoppen
+            _LOGGER.warning("Melding via notify.%s mislukt: %s", svc, err)
+
+    async def _on_hour(self, _now=None) -> None:
+        await self.async_send_report()
+
+    async def async_send_report(self) -> None:
+        title, text, data = self.report.build(self._last_values, self._last_decision, self.control_enabled,
+                                              self.guard.counts(time.monotonic()))
+        self.last_report = {"titel": title, "tekst": text, **data}
+        persistent_notification.async_create(self.hass, text, title=title, notification_id="dewarmte_uurrapport")
+        await self._notify(title, text)
+        self.report.reset(self._last_values)
+        self.async_update_listeners()
+
+    # ------------------------------------------------------------ polling
+    async def _poll(self) -> None:
+        start = time.monotonic()
+        dead: set[int] = set()
+        for block in sorted(R.BLOCKS, key=lambda b: b.tier):
+            st = self._sched[(block.slave, block.start, block.count)]
+            now = time.monotonic()
+            if block.slave in dead:
+                continue
+            if block.tier != R.FAST and (now < st["next"] or now - start > 8.0):
+                continue
+            try:
+                out, failed = await read_registers(self.bus, block.slave, block.start, block.count)
+            except ModbusError as err:
+                st["fails"] += 1
+                st["err"] = str(err)
+                st["next"] = now + min(1800.0, block.tier * 2 ** min(st["fails"], 8))
+                if isinstance(err, ModbusTimeout):
+                    dead.add(block.slave)
+                if st["fails"] in (1, 10, 100):
+                    _LOGGER.warning("Modbus-fout %s (%s): %s", block.label, block.slave, err)
+                continue
+            ts = time.monotonic()
+            for addr, value in out.items():
+                self._raw[(block.slave, addr)] = (value, ts)
+            st.update(fails=0, err=None, ok=ts if out else st["ok"], next=ts + block.tier)
+            if failed and st.get("failed") != failed:
+                _LOGGER.debug("%s: registers zonder antwoord %s", block.label, failed)
+            st["failed"] = failed
+
+    def _status(self) -> dict[int, dict]:
+        now = time.monotonic()
+        out: dict[int, dict] = {}
+        for slave in sorted({b.slave for b in R.BLOCKS}):
+            blocks = [b for b in R.BLOCKS if b.slave == slave]
+            tier = min(b.tier for b in blocks)
+            fast = [b for b in blocks if b.tier == tier]
+            scheds = [self._sched[(b.slave, b.start, b.count)] for b in fast]
+            ages = [None if s["ok"] is None else now - s["ok"] for s in scheds]
+            ok = all(a is not None and a <= R.max_age(tier) for a in ages)
+            out[slave] = {"name": SLAVE_NAMES.get(slave, str(slave)), "ok": ok,
+                          "age_s": None if any(a is None for a in ages) else round(max(ages)),
+                          "error": next((s["err"] for s in scheds if s["err"]), None)}
+        return out
+
+    # ------------------------------------------------------------ invoer voor de engine
+    def _room(self, entity_id: str) -> Room:
+        st = self.hass.states.get(entity_id)
+        if st is None or st.state in ("unavailable", "unknown"):
+            return Room(entity_id, available=False)
+        a = st.attributes
+        valve = _f(a.get("valve_open_percent"))
+        if valve is None and isinstance(a.get("vtherm_over_climate_valve"), dict):
+            valve = _f(a["vtherm_over_climate_valve"].get("valve_open_percent"))
+        return Room(entity_id, True, st.state, _f(a.get("current_temperature")), _f(a.get("temperature")), valve,
+                    trv_sensor=entity_id in (self.cfg.get(CONF_TRV_ROOMS) or []))
+
+    def _inputs(self, v: dict, status: dict) -> Inputs:
+        outdoor = None
+        ent = self.cfg.get(CONF_OUTDOOR)
+        if ent:
+            st = self.hass.states.get(ent)
+            if st is not None and (time.time() - st.last_updated.timestamp()) < 1800:
+                outdoor = _f(st.state)
+        if outdoor is None:
+            outdoor = v.get("t_ambient")
+        price = level = None
+        if self.cfg.get(CONF_PRICE):
+            st = self.hass.states.get(self.cfg[CONF_PRICE])
+            price = _f(st.state) if st is not None else None
+        if self.cfg.get(CONF_PRICE_LEVEL):
+            st = self.hass.states.get(self.cfg[CONF_PRICE_LEVEL])
+            level = st.state if st is not None else None
+        return Inputs(
+            now=time.monotonic(), wall=time.time(), outdoor=outdoor,
+            rooms=[self._room(e) for e in self.cfg.get(CONF_ROOMS, [])],
+            f_comp=v.get("f_comp"), t_supply=v.get("t_supply"), t_return=v.get("t_return"),
+            fault=v.get("fault_active"), defrost=v.get("defrost"),
+            set_769=v.get("set_heating"), on_773=v.get("on_off"), power_775=v.get("power_mode"),
+            dhw_top=v.get("dhw_top"), dhw_set=v.get("pt_set"), t_source_in=v.get("t_source_in"),
+            pomp_t_power_w=v.get("pt_pm_w"), disinfection=v.get("disinfection"),
+            price=price, price_level=level, critical_ok=bool(status.get(1, {}).get("ok")))
+
+    # ------------------------------------------------------------ hoofdcyclus
+    async def _async_update_data(self) -> dict:
+        await self._poll()
+        values = R.decode_all(self._raw, time.monotonic())
+        status = self._status()
+        decision = self.engine.update(self._inputs(values, status))
+        await self._execute(decision)
+        await self._disinfect_step(values)
+        if self.service_until and not self.service_mode:
+            self.service_until = 0.0
+            _LOGGER.warning("Servicemodus automatisch UIT")
+        self.report.sample(values, decision)
+        self._last_values, self._last_decision = values, decision
+
+        if decision["summary"] != self._last_summary:
+            self._last_summary = decision["summary"]
+            _LOGGER.debug("Gepland: %s | blokkades: %s", decision["summary"], ", ".join(decision["blocks"]) or "geen")
+        state = self._state()
+        if state != self._saved:
+            self._saved = state
+            self._store.async_delay_save(self._state, 30)
+        if time.monotonic() - self._last_obs >= 60:
+            self._last_obs = time.monotonic()
+            self.hass.async_add_executor_job(self._obs.append, self._obs_row(values, decision, status))
+        return {"v": values, "d": decision, "s": status}
+
+    @staticmethod
+    def _obs_row(v: dict, d: dict, s: dict) -> dict:
+        row = {"timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")}
+        for key in ("t_ambient", "t_supply", "t_return", "f_comp", "run_state_1", "relay_2", "fault_code",
+                    "set_heating", "mode", "on_off", "power_mode", "control_method", "ao_hm_flow", "ao_hm_kw",
+                    "ao_pm_w", "pt_pm_w", "dhw_top", "dhw_bottom", "t_source_in", "pt_set", "cop_ao"):
+            row[key] = v.get(key)
+        for key in ("outdoor_used", "heat_demand", "demand_level", "worst_deficit", "base_curve", "room_boost",
+                    "feedforward", "trim", "trim_reason",
+                    "offset", "supply_target", "shortfall", "unit_on_desired", "source_support",
+                    "power_mode_desired", "dhw_setpoint_advice", "legionella_days", "summary", "blocks"):
+            row[key] = d.get(key)
+        row["bus_ok"] = all(x["ok"] for x in s.values())
+        row["base_load"] = d.get("base_load")
+        return row

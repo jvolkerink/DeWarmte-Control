@@ -1,0 +1,30 @@
+# Maakt automatisch een GitHub-release zodra de versie in manifest.json verandert.
+# HACS ziet die release als update.
+name: Release
+on:
+  push:
+    branches: [main]
+    paths: ["custom_components/dewarmte/manifest.json"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versie lezen
+        id: v
+        run: echo "version=$(python3 -c "import json;print(json.load(open('custom_components/dewarmte/manifest.json'))['version'])")" >> "$GITHUB_OUTPUT"
+      - name: Tests
+        run: python3 tests/test_core.py
+      - name: Release maken (als die nog niet bestaat)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.v.outputs.version }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag bestaat al"
+          else
+            gh release create "$tag" --title "$tag" --notes "Versie ${{ steps.v.outputs.version }}"
+          fi

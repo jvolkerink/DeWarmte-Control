@@ -1,0 +1,74 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "DeWarmte – connection",
+        "description": "Enter the MQTT topics of your DR164. Stop the old Communication Core add-on first: only one Modbus master is allowed.",
+        "data": {
+          "up_topic": "Response topic (…/up)",
+          "down_topic": "Request topic (…/down)"
+        }
+      },
+      "entities": {
+        "title": "Rooms and sources",
+        "data": {
+          "rooms": "Room thermostats (Versatile Thermostat)",
+          "outdoor_entity": "Outdoor temperature sensor (optional; else SunRain)",
+          "price_entity": "Electricity price sensor EUR/kWh (optional)",
+          "price_level_entity": "Price level sensor (optional)",
+          "notify_service": "Also send hourly report to notify service (e.g. mobile_app_my_phone, optional)",
+          "trv_sensor_rooms": "Rooms measuring with the TRV's own sensor (filtered, lower weight)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Already configured."
+    },
+    "error": {
+      "invalid_topics": "Enter two different topics."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "DeWarmte – settings",
+        "data": {
+          "rooms": "Room thermostats (Versatile Thermostat)",
+          "outdoor_entity": "Outdoor temperature sensor (optional; else SunRain)",
+          "price_entity": "Electricity price sensor EUR/kWh (optional)",
+          "price_level_entity": "Price level sensor (optional)",
+          "setpoint_basis": "Unit setpoint controls on",
+          "curve_start": "Heating curve: supply at 0 °C outside (°C)",
+          "curve_slope": "Heating curve: slope (K per K outside)",
+          "min_supply": "Minimum supply (°C)",
+          "max_supply": "Maximum supply (°C)",
+          "heating_stop_outdoor": "No heating above (°C outside)",
+          "silent_above": "Always Silent above (°C outside)",
+          "silent_release": "Scaling allowed below (°C outside)",
+          "dhw_floor": "DHW minimum (°C)",
+          "dhw_max": "DHW maximum at normal price (°C)",
+          "dhw_max_negative": "DHW maximum at negative price (°C)",
+          "price_cheap": "Cheap below (EUR/kWh)",
+          "price_normal": "Normal below (EUR/kWh)",
+          "price_expensive": "Expensive from (EUR/kWh)",
+          "dhw_source_min": "Pomp T: minimum source water (°C)",
+          "dhw_source_supply": "Supply during Pomp T source support (°C)",
+          "notify_service": "Also send hourly report to notify service (e.g. mobile_app_my_phone, optional)",
+          "keep_on_below": "Base load: unit stays on in heating season below (°C outside)",
+          "trv_sensor_rooms": "Rooms measuring with the TRV's own sensor (filtered, lower weight)",
+          "valve_high": "Raise supply when most-open valve averages above (%)",
+          "valve_low": "Lower supply when most-open valve averages below (%)",
+          "ff_k": "Supply follow on preset step (K per K room target)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "setpoint_basis": {
+      "options": {
+        "supply": "Supply (outlet)",
+        "return": "Return"
+      }
+    }
+  }
+}

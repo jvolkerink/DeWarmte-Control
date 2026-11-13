@@ -1,0 +1,74 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "DeWarmte – verbinding",
+        "description": "Vul de MQTT-onderwerpen van je DR164 in. Stop eerst de oude Communication Core-add-on: er mag maar één Modbus-master zijn.",
+        "data": {
+          "up_topic": "Onderwerp antwoorden (…/up)",
+          "down_topic": "Onderwerp verzoeken (…/down)"
+        }
+      },
+      "entities": {
+        "title": "Kamers en bronnen",
+        "data": {
+          "rooms": "Kamerthermostaten (Versatile Thermostat)",
+          "outdoor_entity": "Buitentemperatuursensor (optioneel; anders SunRain)",
+          "price_entity": "Stroomprijs-sensor EUR/kWh (optioneel)",
+          "price_level_entity": "Prijsniveau-sensor (optioneel)",
+          "notify_service": "Melding uurrapport ook naar notify-dienst (bijv. mobile_app_mijn_telefoon, optioneel)",
+          "trv_sensor_rooms": "Kamers die meten met de sensor in de TRV (trager en minder zwaar meetellen)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Er is al een DeWarmte-installatie."
+    },
+    "error": {
+      "invalid_topics": "Vul twee verschillende onderwerpen in."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "DeWarmte – instellingen",
+        "data": {
+          "rooms": "Kamerthermostaten (Versatile Thermostat)",
+          "outdoor_entity": "Buitentemperatuursensor (optioneel; anders SunRain)",
+          "price_entity": "Stroomprijs-sensor EUR/kWh (optioneel)",
+          "price_level_entity": "Prijsniveau-sensor (optioneel)",
+          "setpoint_basis": "Setpoint van de unit regelt op",
+          "curve_start": "Stooklijn: aanvoer bij 0 °C buiten (°C)",
+          "curve_slope": "Stooklijn: helling (K per K buiten)",
+          "min_supply": "Minimale aanvoer (°C)",
+          "max_supply": "Maximale aanvoer (°C)",
+          "heating_stop_outdoor": "Stookgrens: geen verwarming boven (°C buiten)",
+          "silent_above": "Altijd Stil boven (°C buiten)",
+          "silent_release": "Opschalen toegestaan onder (°C buiten)",
+          "dhw_floor": "Tapwater minimum (°C)",
+          "dhw_max": "Tapwater maximum bij normale prijs (°C)",
+          "dhw_max_negative": "Tapwater maximum bij negatieve prijs (°C)",
+          "price_cheap": "Prijs goedkoop onder (EUR/kWh)",
+          "price_normal": "Prijs normaal onder (EUR/kWh)",
+          "price_expensive": "Prijs duur vanaf (EUR/kWh)",
+          "dhw_source_min": "Pomp T: bronwater minimaal (°C)",
+          "dhw_source_supply": "Aanvoer tijdens bronondersteuning Pomp T (°C)",
+          "notify_service": "Melding uurrapport ook naar notify-dienst (bijv. mobile_app_mijn_telefoon, optioneel)",
+          "keep_on_below": "Basislast: unit blijft aan in stookseizoen onder (°C buiten)",
+          "trv_sensor_rooms": "Kamers die meten met de sensor in de TRV (trager en minder zwaar meetellen)",
+          "valve_high": "Aanvoer omhoog als de meest open klep gemiddeld boven (%) staat",
+          "valve_low": "Aanvoer omlaag als de meest open klep gemiddeld onder (%) staat",
+          "ff_k": "Aanvoer mee bij preset-stap (K per K kamerdoel)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "setpoint_basis": {
+      "options": {
+        "supply": "Aanvoer (outlet)",
+        "return": "Retour"
+      }
+    }
+  }
+}
