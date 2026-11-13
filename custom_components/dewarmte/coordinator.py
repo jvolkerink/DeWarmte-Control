@@ -16,9 +16,10 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import registers as R
 from .bus import ModbusBus, ModbusError, ModbusTimeout, read_registers
-from .const import (CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_OUTDOOR, CONF_PRESENCE, CONF_PRICE_SERVICE, CONF_SCHEDULES, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
+from .const import (CONF_COLD_EXCLUDE, CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_OUTDOOR, CONF_PRESENCE, CONF_PRICE_SERVICE, CONF_SCHEDULES, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
                     CONF_UP_TOPIC, DOMAIN)
 from .engine import Engine, Inputs, Room, Settings
+from .insights import Alerts, CycleCounter, DhwLearner, DhwSettings, WeekStats
 from .obslog import ObsLog
 from .planner import PlanSettings, PricePlanner
 from .report import HourReport
@@ -74,6 +75,14 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         self._price_error: str | None = None
         self.plan_rooms: dict[str, dict] = {}
         self._auto_dis_t = 0.0
+        self.alerts = Alerts()
+        self.cycles = CycleCounter()
+        self.dhw = DhwLearner(DhwSettings(usage_temp=self.settings.dhw_usage_temp or 50.0))
+        self.week = WeekStats()
+        self.last_week: dict = {"titel": None, "tekst": None}
+        self.last_alerts: list[dict] = []
+        self._unsub_week = None
+        self._saved_t = 0.0
 
     # ------------------------------------------------------------ levenscyclus
     async def async_setup(self) -> None:
@@ -82,15 +91,20 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         self.control_enabled = bool(stored.get("control_enabled", True))
         self.plan_enabled = bool(stored.get("plan_enabled", True))
         self.planner = PricePlanner(PlanSettings.from_dict(self.cfg), stored.get("planner"), self.cfg.get(CONF_SCHEDULES))
+        self.cycles = CycleCounter(stored.get("cycles"))
+        self.dhw = DhwLearner(DhwSettings(usage_temp=self.settings.dhw_usage_temp or 50.0), stored.get("dhw"))
+        self.week = WeekStats(stored.get("week"))
+        self.last_week = stored.get("last_week") or self.last_week
         self._unsub = await mqtt.async_subscribe(
             self.hass, self.cfg[CONF_UP_TOPIC], self._on_message, 0, encoding=None)
         self._unsub_time = async_track_time_change(self.hass, self._on_hour, minute=0, second=15)
+        self._unsub_week = async_track_time_change(self.hass, self._on_week, hour=19, minute=0, second=30)
 
     async def async_shutdown(self) -> None:
-        for unsub in (self._unsub, self._unsub_time):
+        for unsub in (self._unsub, self._unsub_time, self._unsub_week):
             if unsub:
                 unsub()
-        self._unsub = self._unsub_time = None
+        self._unsub = self._unsub_time = self._unsub_week = None
         await self._store.async_save(self._state())
         await super().async_shutdown()
 
@@ -104,7 +118,9 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
 
     def _state(self) -> dict:
         return {**self.engine.export_state(), "control_enabled": self.control_enabled,
-                "plan_enabled": self.plan_enabled, "planner": self.planner.export_state()}
+                "plan_enabled": self.plan_enabled, "planner": self.planner.export_state(),
+                "cycles": self.cycles.export_state(), "dhw": self.dhw.export_state(),
+                "week": self.week.export_state(), "last_week": self.last_week}
 
     async def async_set_control(self, enabled: bool, reason: str | None = None) -> None:
         self.control_enabled = enabled
@@ -253,6 +269,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         if not item["ok"]:
             await self._notify_both("DeWarmte: desinfectie niet gestart", f"Schrijven mislukt: {item['error']}")
             return
+        self.week.disinfections += 1
         self.disinfect = {"phase": "opwarmen", "target": target, "hold": hold, "start": time.monotonic(),
                           "reached": None, "max_top": None, "started": time.strftime("%H:%M")}
         grid = v.get("r2_25")
@@ -302,21 +319,115 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         await self._notify(title, message)
 
     # ------------------------------------------------------------ uurrapport
-    async def _notify(self, title: str, message: str) -> None:
+    async def _notify(self, title: str, message: str, urgent: bool = False) -> None:
         svc = (self.cfg.get(CONF_NOTIFY) or "").strip().removeprefix("notify.")
         if not svc:
             return
+        payload: dict = {"title": title, "message": message}
+        if urgent and svc.startswith("mobile_app"):
+            payload["data"] = {"push": {"interruption-level": "time-sensitive"}}
         try:
-            await self.hass.services.async_call("notify", svc, {"title": title, "message": message}, blocking=False)
+            await self.hass.services.async_call("notify", svc, payload, blocking=False)
         except Exception as err:  # noqa: BLE001 - een melding mag de regeling nooit stoppen
             _LOGGER.warning("Melding via notify.%s mislukt: %s", svc, err)
 
     async def _on_hour(self, _now=None) -> None:
         await self.async_send_report()
 
+    # ------------------------------------------------------------ weekrapport
+    def _energies(self) -> dict:
+        v = self._last_values
+        return {k: v.get(k) for k in ("ao_pm_energy", "ao_hm_energy", "pt_pm_energy")}
+
+    async def _on_week(self, _now=None) -> None:
+        if time.localtime().tm_wday == 6:          # zondag
+            await self.async_send_week_report(reset=True)
+
+    async def async_send_week_report(self, reset: bool = False) -> None:
+        wall = time.time()
+        title, text, data = self.week.build(wall, self._energies(), self.cycles, self.dhw,
+                                            self.dhw.s.usage_temp, self._last_decision.get("legionella_days"))
+        if not reset:
+            title += " (tussenstand)"
+        self.last_week = {"titel": title, "tekst": text, **data}
+        persistent_notification.async_create(self.hass, text, title=title, notification_id="dewarmte_weekrapport")
+        await self._notify(title, text)
+        if reset:
+            self.week.reset(wall, self._energies())
+        await self._store.async_save(self._state())
+        self.async_update_listeners()
+
+    # ------------------------------------------------------------ meldingen en leren
+    def _room_rows(self) -> list[dict]:
+        rows = []
+        for ent in self.cfg.get(CONF_ROOMS, []):
+            st = self.hass.states.get(ent)
+            if st is None or st.state in ("unavailable", "unknown"):
+                continue
+            a = st.attributes
+            window = str(a.get("window_state", "off")).lower() == "on"
+            rows.append({"id": ent, "name": a.get("friendly_name", ent), "current": _f(a.get("current_temperature")),
+                         "target": _f(a.get("temperature")), "heating": st.state == "heat" and not window})
+        return rows
+
+    async def _insights_step(self, v: dict, decision: dict, status: dict) -> None:
+        wall = time.time()
+        self.cycles.update(v.get("compressor_running"), wall, bool(v.get("defrost")))
+        heating_t = v.get("pt_pm_w") is not None and v["pt_pm_w"] >= 100
+        if self.dhw.observe(wall, v.get("dhw_top"), v.get("dhw_bottom"), heating_t):
+            self.week.draw(wall, self.dhw.events[-1][1])
+        rows = self._room_rows()
+        excl = self.cfg.get(CONF_COLD_EXCLUDE)
+        if excl is None:
+            excl = [e for e in self.cfg.get(CONF_ROOMS, []) if "toilet" in e]
+        pt_err = {k: v.get(k) for k in ("pt_err1", "pt_err2", "pt_err3")}
+        pt_fault = None if all(x is None for x in pt_err.values()) else any(x for x in pt_err.values())
+        ao_code = f"code {v.get('fault_code')}/{v.get('subfault_code')}"
+        pt_code = ", ".join(f"{k[-1]}: {int(x)}" for k, x in pt_err.items() if x)
+        events = self.alerts.update(time.monotonic(), bool(status.get(1, {}).get("ok")), v.get("fault_active"),
+                                    ao_code, pt_fault, pt_code or "–", [r for r in rows if r["id"] not in excl])
+        for kind, text in events:
+            title = "DeWarmte: hersteld" if kind == "hersteld" else "DeWarmte: let op"
+            self.last_alerts = (self.last_alerts + [{"tijd": time.strftime("%d-%m %H:%M"), "soort": kind,
+                                                     "tekst": text}])[-20:]
+            if kind == "melding":
+                self.week.alerts += 1
+            _LOGGER.warning("%s: %s", title, text)
+            persistent_notification.async_create(self.hass, text, title=title, notification_id="dewarmte_melding")
+            await self._notify(title, text, urgent=kind == "melding")
+        el = None
+        if v.get("ao_pm_w") is not None or v.get("pt_pm_w") is not None:
+            el = (v.get("ao_pm_w") or 0) + (v.get("pt_pm_w") or 0)
+        price = self.planner.price_now(wall)
+        if price is None and self.cfg.get(CONF_PRICE):
+            st = self.hass.states.get(self.cfg[CONF_PRICE])
+            price = _f(st.state) if st is not None else None
+        self.week.sample(wall, rows, el, price, self._energies_from(v))
+
+    @staticmethod
+    def _energies_from(v: dict) -> dict:
+        return {k: v.get(k) for k in ("ao_pm_energy", "ao_hm_energy", "pt_pm_energy")}
+
+    def _dhw_need(self, v: dict) -> tuple[float | None, str]:
+        if not self.settings.dhw_usage_temp or self.disinfect or not self.control_enabled:
+            return None, ""
+        mean = self.planner._mean if self.planner.prices else None   # noqa: SLF001
+        return self.dhw.need(time.time(), v.get("dhw_top"), v.get("pt_restart_diff"), self.settings.dhw_max, mean)
+
+    def dhw_info(self) -> dict:
+        wall = time.time()
+        nxt = self.dhw.next_usage(wall)
+        return {"volgend_tapmoment": None if nxt is None else time.strftime("%a %H:%M", time.localtime(nxt)),
+                "geleerd": self.dhw.windows(wall), "tapmomenten_28d": len(self.dhw.events),
+                "opwarmsnelheid_k_per_uur": round(self.dhw.rate, 1), "minimaal": self.dhw.s.usage_temp,
+                "voorbereiding": self.dhw.prep,
+                "laatste": [time.strftime("%a %d-%m %H:%M", time.localtime(t)) + f" ({top:.0f} °C)"
+                            for t, top in self.dhw.events[-8:]][::-1]}
+
     async def async_send_report(self) -> None:
         title, text, data = self.report.build(self._last_values, self._last_decision, self.control_enabled,
                                               self.guard.counts(time.monotonic()))
+        text += f"\nCompressorstarts laatste uur: {self.cycles.last_hour(time.time())} | tapwater: {self.dhw.reason}"
         self.last_report = {"titel": title, "tekst": text, **data}
         persistent_notification.async_create(self.hass, text, title=title, notification_id="dewarmte_uurrapport")
         await self._notify(title, text)
@@ -396,6 +507,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         if self.cfg.get(CONF_PRICE_LEVEL):
             st = self.hass.states.get(self.cfg[CONF_PRICE_LEVEL])
             level = st.state if st is not None else None
+        need, need_reason = self._dhw_need(v)
         return Inputs(
             now=time.monotonic(), wall=time.time(), outdoor=outdoor,
             rooms=[self._room(e) for e in self.cfg.get(CONF_ROOMS, [])],
@@ -406,7 +518,8 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
             pomp_t_power_w=v.get("pt_pm_w"), disinfection=v.get("disinfection"),
             price=price, price_level=level, critical_ok=bool(status.get(1, {}).get("ok")),
             price_rank=self.planner.rank_now(time.time()) if self.plan_enabled else None,
-            plan_offset=self.planner.offset if self._plan_active() else None)
+            plan_offset=self.planner.offset if self._plan_active() else None,
+            dhw_need=need, dhw_need_reason=need_reason)
 
     # ------------------------------------------------------------ prijsplanner
     def _plan_active(self) -> bool:
@@ -520,6 +633,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         await self._execute(decision)
         await self._disinfect_step(values)
         await self._auto_disinfection(decision)
+        await self._insights_step(values, decision, status)
         if self.service_until and not self.service_mode:
             self.service_until = 0.0
             _LOGGER.warning("Servicemodus automatisch UIT")
@@ -530,9 +644,10 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
             self._last_summary = decision["summary"]
             _LOGGER.debug("Gepland: %s | blokkades: %s", decision["summary"], ", ".join(decision["blocks"]) or "geen")
         state = self._state()
-        if state != self._saved:
-            self._saved = state
-            self._store.async_delay_save(self._state, 30)
+        quiet = {k: x for k, x in state.items() if k != "week"}        # weekcijfers veranderen elke cyclus
+        if quiet != self._saved or time.monotonic() - self._saved_t >= 600:
+            self._saved, self._saved_t = quiet, time.monotonic()
+            self._store.async_delay_save(self._state, 5)
         if time.monotonic() - self._last_obs >= 60:
             self._last_obs = time.monotonic()
             self.hass.async_add_executor_job(self._obs.append, self._obs_row(values, decision, status))

@@ -20,7 +20,8 @@
           "trv_sensor_rooms": "Kamers die meten met de sensor in de TRV (trager en minder zwaar meetellen)",
           "presence_entity": "Aanwezigheid (aan = iemand thuis)",
           "price_service": "Prijsvoorspelling-dienst (bijv. tibber.get_prices)",
-          "warm_periods": "Warme periodes per kamer, één regel per kamer: climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:00-22:30"
+          "warm_periods": "Warme periodes per kamer, één regel per kamer: climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:00-22:30",
+          "cold_alert_exclude": "Kamers zonder melding 'blijft te koud' (bijv. toilet)"
         }
       }
     },
@@ -72,7 +73,9 @@
           "presence_entity": "Aanwezigheid (aan = iemand thuis)",
           "price_service": "Prijsvoorspelling-dienst (bijv. tibber.get_prices)",
           "warm_periods": "Warme periodes per kamer, één regel per kamer: climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:00-22:30",
-          "legionella_auto_days": "Automatische desinfectie na zoveel dagen zonder ≥ 60 °C (0 = uit)"
+          "legionella_auto_days": "Automatische desinfectie na zoveel dagen zonder ≥ 60 °C (0 = uit)",
+          "dhw_usage_temp": "Tapwater boven minimaal op geleerde tapmomenten (°C, 0 = uit)",
+          "cold_alert_exclude": "Kamers zonder melding 'blijft te koud' (bijv. toilet)"
         }
       }
     }

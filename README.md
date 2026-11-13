@@ -149,3 +149,28 @@ Dagen: ma, di, wo, do, vr, za, zo, reeksen als `ma-vr`, of `dagelijks`.
 Is het tapwater 7 dagen (instelbaar, 0 = uit) niet boven 60 °C geweest, dan start de integratie zelf een
 desinfectie (alleen warmtepomp, zoals de knop) op het goedkoopste moment van het komende etmaal, of uiterlijk
 een dag later. Hooguit één automatische poging per 24 uur; je krijgt er een melding van.
+
+## Nieuw in 3.5: meldingen, weekrapport, tapmomenten en pendelbewaking
+**Directe meldingen** (push naar de notify-dienst, op iPhone als *time-sensitive*, en een melding in HA):
+- geen verse Modbus-data van de SunRain gedurende 10 minuten (en een bericht als het hersteld is);
+- storing pomp AO (foutcode/subcode) of Pomp T (foutregisters 50, 51, 62), na 2 minuten;
+- een kamer blijft 2 uur lang meer dan 1 K onder het doel. Na een verhoging van het doel begint die
+  2 uur opnieuw, en kamers met open raam of die uit staan tellen niet. Kamers uitsluiten kan in de opties
+  (*Kamers zonder melding 'blijft te koud'*; standaard het toilet).
+Dezelfde melding komt pas opnieuw nadat de situatie 30 minuten normaal is geweest.
+
+**Weekrapport** elke zondag om 19:00 (push + tabblad *Week*): per kamer de gemiddelde afwijking, % van de tijd
+binnen ±0,5 K en uren > 1 K te koud; energie en COP van de week; wat de warmtepompen hebben gekost en het verschil
+met stoken tegen de weekgemiddelde prijs; compressorstarts; herkende tapmomenten; legionella. De knop
+*Weekrapport nu versturen* stuurt een tussenstand (de week loopt door).
+
+**Tapwater op gebruik**: snelle dalingen in de boiler (≥ 3 K onderin of ≥ 2 K bovenin binnen 20 minuten) worden
+herkend als tapmoment. Per werkdag/weekend en per half uur onthoudt de integratie hoe vaak er getapt wordt
+(laatste 28 dagen, recente dagen tellen zwaarder). Een tijdvak op ≥ 40 % van de dagen geldt als tapmoment. Is de
+boiler dan naar verwachting kouder dan *Tapwater boven minimaal op geleerde tapmomenten* (standaard 50 °C), dan
+warmt Pomp T vooraf op, in het goedkoopste stuk van de 6 uur ervoor. De opwarmsnelheid van Pomp T wordt geleerd.
+Sensor *Tapwaterplanning* laat zien wat er geleerd is en wat er gepland staat. Op 0 zetten = uit.
+
+**Pendelbewaking**: sensoren *Compressorstarts laatste uur* en *vandaag* (een stop korter dan 60 s telt niet),
+grafiek per uur op het tabblad *Week* en een samenvatting in het weekrapport (waarschuwing bij ≥ 7 uur met
+meer dan 3 starts in een week).

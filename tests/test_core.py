@@ -362,6 +362,89 @@ def test_planner_warm_periods_bathroom():
     tgt, why = p.room_target("climate.badkamer", presets, True, at(mon, 21, 0), None)
     assert tgt == 20.0 and "warme periode" in why                    # prijs-offset ook in warme periode
 
+# ---- 3.5: meldingen, compressorstarts, tapmomenten leren, weekrapport
+ins = load("insights")
+import time as _time
+def _wall(y, mo, d, h, mi=0):
+    return _time.mktime((y, mo, d, h, mi, 0, 0, 0, -1))
+
+def test_alerts_modbus_once_and_recovery():
+    a = ins.Alerts()
+    assert a.update(0, False, False, "", False, "", []) == []
+    assert a.update(9 * 60, False, False, "", False, "", []) == []
+    ev = a.update(10 * 60 + 1, False, False, "", False, "", [])
+    assert ev and ev[0][0] == "melding"
+    assert a.update(11 * 60, False, False, "", False, "", []) == []            # niet herhalen
+    assert a.update(12 * 60, True, False, "", False, "", []) == []
+    ev = a.update(14 * 60 + 1, True, False, "", False, "", [])
+    assert ev and ev[0][0] == "hersteld" and not a.active
+
+def test_alerts_room_cold_waits_after_target_step():
+    a = ins.Alerts()
+    room = lambda cur, tgt: [{"id": "climate.x", "name": "X", "current": cur, "target": tgt, "heating": True}]
+    a.update(0, True, False, "", False, "", room(19.0, 19.5))
+    a.update(3600, True, False, "", False, "", room(18.9, 21.0))                # doel omhoog: tijd gunnen
+    assert a.update(3600 + 7000, True, False, "", False, "", room(19.5, 21.0)) == []
+    ev = a.update(3600 + 7300, True, False, "", False, "", room(19.5, 21.0))
+    assert ev and "te koud" in ev[0][1], ev
+    off = [{"id": "climate.y", "name": "Y", "current": 15, "target": 20, "heating": False}]
+    a.update(0, True, False, "", False, "", off)
+    assert a.update(9000, True, False, "", False, "", off) == []
+
+def test_cycle_counter_starts():
+    c = ins.CycleCounter()
+    t = _wall(2026, 11, 16, 10)
+    seq = [(0, True), (600, False), (630, True), (900, False), (1000, True), (1600, False), (1800, True)]
+    n = sum(c.update(on, t + dt) for dt, on in seq)
+    assert n == 2, n                     # 30 s uit telt niet als nieuwe start
+    assert c.last_hour(t + 1800) == 2 and len(c.runs) >= 2
+
+def test_dhw_learner_learns_and_preheats_cheapest():
+    L = ins.DhwLearner()
+    d0 = _wall(2026, 11, 2, 0)                             # maandag
+    L.first = d0
+    for day in range(14):
+        base = d0 + day * 86400
+        if _time.localtime(base).tm_wday >= 5:
+            continue
+        t = base + 7 * 3600                                # 07:00 douchen, onderin snel 6 K omlaag
+        L._hist.clear()
+        for k, (top, bot) in enumerate([(52, 50), (52, 48), (51, 46), (50, 44)]):
+            L.observe(t + k * 300, top, bot, False)
+    assert len(L.events) == 10, len(L.events)
+    now = d0 + 14 * 86400 + 2 * 3600                       # maandag 02:00
+    assert L.windows(now)["werkdag"] == ["07:00–07:30"], L.windows(now)
+    assert L.next_usage(now) == d0 + 14 * 86400 + 7 * 3600
+    cheap = lambda a, b: 0.10 if a >= now + 3600 and b <= now + 3 * 3600 else 0.30
+    need, why = L.need(now, 46, 5, 60, cheap)                # 01:00 is nog te vroeg (6 u vooruit)
+    assert need is None and "03:00" in why, why
+    need, why = L.need(now + 3600, 46, 5, 60, cheap)
+    assert need == 52 and "07:00" in why, (need, why)
+    need, why = L.need(now + 3600 + 600, 51.0 + 2, 5, 60, cheap)    # opgewarmd -> los
+    assert need is None, why
+    assert L.need(now, 56, 5, 60, cheap)[0] is None          # warm genoeg, niets nodig
+
+def test_engine_dhw_need_raises_setpoint():
+    s = eng.Settings(); e = eng.Engine(s)
+    base = dict(now=1000.0, wall=1e9, outdoor=5.0, rooms=[], dhw_top=46, dhw_set=45, price=0.30, price_rank=0.8)
+    d = e.update(eng.Inputs(**base))
+    assert d["dhw_setpoint_advice"] == s.dhw_floor
+    d = e.update(eng.Inputs(**{**base, "now": 1060.0, "dhw_need": 52, "dhw_need_reason": "tapmoment 07:00"}))
+    assert d["dhw_setpoint_advice"] == 52 and "07:00" in d["dhw_reason"]
+
+def test_week_stats_savings_and_comfort():
+    w = ins.WeekStats(); t = _wall(2026, 11, 9, 19)
+    w.reset(t, {"ao_pm_energy": 100.0, "ao_hm_energy": 300.0, "pt_pm_energy": 10.0})
+    room = [{"id": "climate.a", "name": "A", "current": 20.0, "target": 20.0, "heating": True}]
+    for k in range(1, 13):                                 # 1 uur, 2 kW bij goedkoop, 0 bij duur
+        cheap = k <= 6
+        w.sample(t + k * 300, room, 2000 if cheap else 0, 0.10 if cheap else 0.40, {})
+    c = ins.CycleCounter(); L = ins.DhwLearner()
+    title, text, data = w.build(t + 3600, {"ao_pm_energy": 110.0, "ao_hm_energy": 340.0, "pt_pm_energy": 11.0}, c, L, 50, 3.0)
+    assert data["cop_week"] == 4.0 and data["kamers"]["climate.a"]["binnen_pct"] == 100, data["kamers"]
+    assert abs(data["kosten"] - 0.10) < 0.01 and data["besparing"] > 0.14, data
+    assert "bespaard" in text
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

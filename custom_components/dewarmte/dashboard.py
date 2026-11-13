@@ -133,6 +133,7 @@ def build(r: Resolve, rooms: list[str], price_entity: str | None = None) -> dict
             {"type": "heading", "heading": "Meldingen"},
             {**report_md, "grid_options": {"columns": "full"}},
             {**actions_md, "grid_options": {"columns": "full"}},
+            tile(s("alerts"), "Actieve meldingen", "mdi:alert-circle-outline"),
             _press(r("button", "report_now"), "Uurrapport nu versturen", "mdi:message-text-clock")]},
     ]}
 
@@ -212,6 +213,15 @@ def build(r: Resolve, rooms: list[str], price_entity: str | None = None) -> dict
             {"type": "entities", "title": "Pomp T", "entities": [
                 s("p_el_pt"), s("e_pt"), s("t_source_in"), r("sensor", "r2_58"), b("pomp_t_running"),
                 b("source_support"), r("sensor", "r2_60"), r("sensor", "r2_50"), r("sensor", "r2_51")]}]},
+        {"type": "markdown", "title": "Geleerde tapmomenten",
+         "content": ("{%% set e = '%s' %%}{%% set g = state_attr(e, 'geleerd') or {} %%}"
+                     "**{{ states(e) }}**\n\n"
+                     "Volgend tapmoment: **{{ state_attr(e, 'volgend_tapmoment') or 'nog niet geleerd' }}** · "
+                     "minimaal {{ state_attr(e, 'minimaal') }} °C · opwarmen ~{{ state_attr(e, 'opwarmsnelheid_k_per_uur') }} K/uur\n\n"
+                     "Werkdag: {{ g.get('werkdag', []) | join(', ') or '–' }}  \n"
+                     "Weekend: {{ g.get('weekend', []) | join(', ') or '–' }}\n\n"
+                     "Laatst herkend ({{ state_attr(e, 'tapmomenten_28d') or 0 }} in 28 dagen):\n"
+                     "{%% for x in state_attr(e, 'laatste') or [] %%}- {{ x }}\n{%% endfor %%}") % s("dhw_plan")},
         dhw_chart]}
 
     svc_cards: list[dict] = [
@@ -241,4 +251,21 @@ def build(r: Resolve, rooms: list[str], price_entity: str | None = None) -> dict
         {"type": "markdown", "content": "Alle ruwe registers staan onder Instellingen → Apparaten → "
                                          "*SunRain monoblock*, *Pomp T*, *kWh-meter* en *Warmtemeter* (Diagnostiek)."}]}
 
-    return {"title": "DeWarmte", "views": [overview, charts, rooms_view, dhw_view, service_view, diag_view]}
+    week_md = {"type": "markdown", "title": "Weekrapport",
+               "content": "**{{ states('%s') }}**\n\n{{ state_attr('%s', 'tekst') or "
+                          "'Het eerste weekrapport komt zondag om 19:00.' }}" % (s("week_report"), s("week_report"))}
+    alerts_md = {"type": "markdown", "title": "Meldingen",
+                 "content": "{%% set a = state_attr('%s', 'laatste') or [] %%}{%% for x in a %%}"
+                            "{{ '⚠️' if x.soort == 'melding' else '✅' }} {{ x.tijd }} {{ x.tekst }}\n"
+                            "{%% else %%}Nog geen meldingen.{%% endfor %%}" % s("alerts")}
+    starts = _apex("Compressorstarts per uur", [
+        {"entity": s("starts_hour"), "name": "Starts", "type": "column", "color": "#ffd166",
+         "group_by": {"func": "max", "duration": "1h"}}], hours=72, height=200,
+        yaxis=[{"decimals": 0, "min": 0, "max": "~6", "apex_config": {"tickAmount": 3}}])
+    week_view = {"title": "Week", "path": "week", "icon": "mdi:calendar-week", "cards": [
+        week_md, {"type": "horizontal-stack", "cards": [
+            tile(s("starts_hour"), "Starts laatste uur"), tile(s("starts_today"), "Starts vandaag")]},
+        starts, alerts_md,
+        _press(r("button", "week_now"), "Tussenstand weekrapport versturen", "mdi:calendar-week")]}
+
+    return {"title": "DeWarmte", "views": [overview, charts, rooms_view, dhw_view, week_view, service_view, diag_view]}

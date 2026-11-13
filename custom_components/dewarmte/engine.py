@@ -87,6 +87,7 @@ class Settings:
     dhw_power_on_w: float = 100.0
     legionella_temp: float = 60.0
     legionella_warn_days: float = 14.0
+    dhw_usage_temp: float = 50.0          # boiler boven minimaal op een geleerd tapmoment (0 = uit)
     legionella_auto_days: float = 7.0      # automatische desinfectie na zoveel dagen zonder ≥ 60 °C (0 = uit)
 
     @classmethod
@@ -142,6 +143,8 @@ class Inputs:
     price_level: str | None = None
     price_rank: float | None = None         # 0 = goedkoopste moment komend etmaal, 1 = duurste (planner)
     plan_offset: float | None = None        # prijs-offset van de kamerdoelen (planner)
+    dhw_need: float | None = None          # minimaal tapwatersetpoint voor een geleerd tapmoment
+    dhw_need_reason: str = ""
     critical_ok: bool = False
 
 
@@ -451,8 +454,10 @@ class Engine:
         if price is None or price >= 0:
             want = min(want, s.dhw_max)
         want = max(want, s.dhw_floor)
-        old = self._dhw_target
         urgent = price is not None and price < 0
+        if inp.dhw_need is not None and inp.dhw_need > want:
+            want, reason, urgent = inp.dhw_need, inp.dhw_need_reason or "tapmoment", True
+        old = self._dhw_target
         if old is None or urgent or abs(want - old) >= 5 or (
                 self._dhw_changed is not None and now - self._dhw_changed >= s.dhw_hold_min * 60 and want != old):
             self._dhw_target, self._dhw_changed = want, now

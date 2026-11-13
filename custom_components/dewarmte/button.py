@@ -10,7 +10,7 @@ from .sensor import main_device
 
 async def async_setup_entry(hass, entry, async_add_entities):
     c = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([ReportButton(c, entry), DisinfectStart(c, entry), DisinfectStop(c, entry)])
+    async_add_entities([ReportButton(c, entry), DisinfectStart(c, entry), DisinfectStop(c, entry), WeekButton(c, entry)])
 
 
 class ReportButton(CoordinatorEntity, ButtonEntity):
@@ -53,3 +53,19 @@ class DisinfectStop(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.coordinator.async_stop_disinfection()
+
+
+class WeekButton(CoordinatorEntity, ButtonEntity):
+    """Tussenstand van het weekrapport versturen (de week loopt gewoon door)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Weekrapport nu versturen"
+    _attr_icon = "mdi:calendar-week"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_week_now"
+        self._attr_device_info = main_device(entry)
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_send_week_report(reset=False)

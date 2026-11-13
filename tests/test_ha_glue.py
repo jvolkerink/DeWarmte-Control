@@ -221,10 +221,23 @@ async def main():
     c._last_plan = 0; await c._async_update_data()
     assert c.disinfect is None                                                  # niet meteen opnieuw (max 1x per dag)
 
+    # ---- meldingen, weekrapport, compressorstarts
+    assert timers[1][1] == {"hour": 19, "minute": 0, "second": 30}
+    c.alerts._since["modbus"] = time.monotonic() - 11 * 60
+    st1 = c._sched[(1, 0, 15)]; ok_before = st1["ok"]; st1["ok"] = time.monotonic() - 3600
+    ev = c.alerts.update(time.monotonic(), False, False, "", False, "", [])
+    assert ev and "Geen verse data" in ev[0][1], ev
+    st1["ok"] = ok_before
+    await c.async_send_week_report(reset=False)
+    wk = [x for x in notes if x[0] == "dewarmte_weekrapport"][-1]
+    assert "tussenstand" in wk[1] and "Compressor:" in wk[2], wk
+    assert c.last_week["titel"] and "kamers" in c.last_week
+    print("     weekrapport:", wk[1]); print("     " + wk[2].replace("\n", "\n     "))
+
     # ---- dashboard: elke verwijzing moet naar een echte entiteit wijzen
     ids = {("sensor", d.key) for d in sens.SENSORS + sens.EXTRA} | {("binary_sensor", d.key) for d in binm.BINARIES}
     ids |= {("sensor", x.key) for x in regs.RAW if not isinstance(x.bit, int)} | {("binary_sensor", x.key) for x in regs.RAW if isinstance(x.bit, int)}
-    ids |= {("switch", "control"), ("switch", "service_mode"), ("switch", "plan"), ("button", "report_now"), ("button", "disinfect_start"), ("button", "disinfect_stop")}
+    ids |= {("switch", "control"), ("switch", "service_mode"), ("switch", "plan"), ("button", "report_now"), ("button", "disinfect_start"), ("button", "disinfect_stop"), ("button", "week_now")}
     ids |= {("number", f"n{k[0]}_{k[1]}") for k in load("writes").SERVICE}
     bad = []
     def resolve(platform, key):
@@ -234,7 +247,7 @@ async def main():
     assert not bad, bad
     text = yaml.safe_dump(board, allow_unicode=True, sort_keys=False)
     assert yaml.safe_load(text) == board
-    numbers = sum(len(cd["entities"]) for cd in board["views"][4]["cards"] if cd.get("type") == "entities")
+    numbers = sum(len(cd["entities"]) for cd in board["views"][5]["cards"] if cd.get("type") == "entities")
     assert numbers == len(load("writes").SERVICE), (numbers, len(load("writes").SERVICE))
     open("/tmp/dw_dashboard.yaml", "w").write(text)
     print("PASS service/desinfectie/dashboard:", len(board["views"]), "views,", numbers, "service-instellingen,",
