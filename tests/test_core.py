@@ -340,6 +340,28 @@ def test_engine_dhw_uses_price_rank_and_plan_feedforward():
     assert d["dhw_setpoint_advice"] == 45.0
 
 
+def test_planner_warm_periods_bathroom():
+    sch = "climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:00-22:30"
+    p = pl.PricePlanner(pl.PlanSettings(), None, sch)
+    presets = {"comfort_temp": 20.5, "eco_temp": 19.0, "comfort_away_temp": 19.5, "eco_away_temp": 18.0}
+    import datetime as D
+    mon = D.datetime(2026, 11, 16)                                   # maandag
+    sat = D.datetime(2026, 11, 14)                                   # zaterdag
+    at = lambda d, h, m=0: d.replace(hour=h, minute=m).timestamp()
+    p.offset = 0.0
+    assert p.room_target("climate.badkamer", presets, True, at(mon, 5, 10), None)[0] == 21.0   # 20 min voorloop
+    assert p.room_target("climate.badkamer", presets, True, at(mon, 6, 30), None)[0] == 21.0
+    assert p.room_target("climate.badkamer", presets, True, at(mon, 7, 45), None)[0] == 20.5   # na 07:30: comfort
+    assert p.room_target("climate.badkamer", presets, True, at(mon, 21, 0), None)[0] == 21.0
+    assert p.room_target("climate.badkamer", presets, True, at(mon, 23, 0), None)[0] == 19.0   # nacht
+    assert p.room_target("climate.badkamer", presets, True, at(sat, 6, 0), None)[0] == 19.0    # weekend nog nacht
+    assert p.room_target("climate.badkamer", presets, True, at(sat, 8, 30), None)[0] == 21.0
+    assert p.room_target("climate.badkamer", presets, False, at(mon, 6, 30), None)[0] == 19.5  # niemand thuis: comfort-afwezig
+    assert p.room_target("climate.slaapkamer_finn", presets, True, at(mon, 6, 30), None)[0] == 20.5
+    p.offset = -1.0
+    tgt, why = p.room_target("climate.badkamer", presets, True, at(mon, 21, 0), None)
+    assert tgt == 20.0 and "warme periode" in why                    # prijs-offset ook in warme periode
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import registers as R
 from .bus import ModbusBus, ModbusError, ModbusTimeout, read_registers
-from .const import (CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_OUTDOOR, CONF_PRESENCE, CONF_PRICE_SERVICE, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
+from .const import (CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_OUTDOOR, CONF_PRESENCE, CONF_PRICE_SERVICE, CONF_SCHEDULES, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
                     CONF_UP_TOPIC, DOMAIN)
 from .engine import Engine, Inputs, Room, Settings
 from .obslog import ObsLog
@@ -67,7 +67,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         self._last_decision: dict = {}
         self.service_until = 0.0             # monotonic; servicemodus aan zolang now < service_until
         self.disinfect: dict | None = None   # actieve handmatige desinfectie
-        self.planner = PricePlanner(PlanSettings.from_dict(self.cfg))
+        self.planner = PricePlanner(PlanSettings.from_dict(self.cfg), None, self.cfg.get(CONF_SCHEDULES))
         self.plan_enabled = True
         self._last_plan = 0.0
         self._last_price_fetch = 0.0
@@ -80,7 +80,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         self.engine = Engine(self.settings, stored)
         self.control_enabled = bool(stored.get("control_enabled", True))
         self.plan_enabled = bool(stored.get("plan_enabled", True))
-        self.planner = PricePlanner(PlanSettings.from_dict(self.cfg), stored.get("planner"))
+        self.planner = PricePlanner(PlanSettings.from_dict(self.cfg), stored.get("planner"), self.cfg.get(CONF_SCHEDULES))
         self._unsub = await mqtt.async_subscribe(
             self.hass, self.cfg[CONF_UP_TOPIC], self._on_message, 0, encoding=None)
         self._unsub_time = async_track_time_change(self.hass, self._on_hour, minute=0, second=15)

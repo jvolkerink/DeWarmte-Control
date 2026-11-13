@@ -135,3 +135,12 @@ morgen op via een dienst (standaard `tibber.get_prices`, instelbaar) en stuurt d
 Zet de automation *Nachtverlaging thermostaat* uit zodra je 3.4 gebruikt: de integratie doet dit nu zelf.
 Sensor **Prijs-offset kamers** toont de reden, het geleerde venster, de afkoelsnelheid per kamer en de
 planning voor de komende uren; het tabblad Grafieken heeft een prijs/offset-grafiek en een planningstabel.
+
+## Nieuw in 3.4.1: warme periodes per kamer
+Optie **Warme periodes per kamer** (Configureren), één regel per kamer:
+```
+climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:00-22:30
+```
+Tijdens zo'n periode is het normale doel van die kamer de opgegeven temperatuur (hier 21 °C); de prijs-offset
+geldt ook dan. De periode begint 30 minuten eerder zodat het op tijd warm is. Alleen als er iemand thuis is.
+Dagen: ma, di, wo, do, vr, za, zo, reeksen als `ma-vr`, of `dagelijks`.

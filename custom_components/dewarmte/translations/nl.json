@@ -19,7 +19,8 @@
           "notify_service": "Melding uurrapport ook naar notify-dienst (bijv. mobile_app_mijn_telefoon, optioneel)",
           "trv_sensor_rooms": "Kamers die meten met de sensor in de TRV (trager en minder zwaar meetellen)",
           "presence_entity": "Aanwezigheid (aan = iemand thuis)",
-          "price_service": "Prijsvoorspelling-dienst (bijv. tibber.get_prices)"
+          "price_service": "Prijsvoorspelling-dienst (bijv. tibber.get_prices)",
+          "warm_periods": "Warme periodes per kamer, één regel per kamer: climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:00-22:30"
         }
       }
     },
@@ -69,7 +70,8 @@
           "morning_weekday": "Ochtend werkdag vanaf (uu:mm)",
           "morning_weekend": "Ochtend weekend vanaf (uu:mm)",
           "presence_entity": "Aanwezigheid (aan = iemand thuis)",
-          "price_service": "Prijsvoorspelling-dienst (bijv. tibber.get_prices)"
+          "price_service": "Prijsvoorspelling-dienst (bijv. tibber.get_prices)",
+          "warm_periods": "Warme periodes per kamer, één regel per kamer: climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:00-22:30"
         }
       }
     }

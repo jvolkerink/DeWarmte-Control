@@ -7,7 +7,7 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import (CONF_BASIS, CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_PRESENCE, CONF_PRICE_SERVICE, PLAN_FIELDS, PLAN_TIMES, CONF_OUTDOOR, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
+from .const import (CONF_BASIS, CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_PRESENCE, CONF_PRICE_SERVICE, CONF_SCHEDULES, PLAN_FIELDS, PLAN_TIMES, CONF_OUTDOOR, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
                     CONF_UP_TOPIC, DOMAIN, SETTING_FIELDS)
 from .engine import Settings
 from .planner import PlanSettings
@@ -31,6 +31,8 @@ def _entity_schema(defaults: dict) -> dict:
             selector.EntitySelectorConfig(domain=["input_boolean", "binary_sensor", "group", "person", "zone"])),
         vol.Optional(CONF_PRICE_SERVICE, description={"suggested_value": defaults.get(CONF_PRICE_SERVICE, "tibber.get_prices")}):
             selector.TextSelector(),
+        vol.Optional(CONF_SCHEDULES, description=sug(CONF_SCHEDULES)): selector.TextSelector(
+            selector.TextSelectorConfig(multiline=True)),
     }
 
 

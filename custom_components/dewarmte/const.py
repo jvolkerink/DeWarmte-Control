@@ -1,6 +1,6 @@
 """Constanten (geen Home Assistant-imports, zodat ze ook los te testen zijn)."""
 DOMAIN = "dewarmte"
-VERSION = "3.4.0"
+VERSION = "3.4.1"
 PLATFORMS = ["sensor", "binary_sensor", "switch", "button", "number"]
 
 CONF_UP_TOPIC = "up_topic"
@@ -13,7 +13,8 @@ CONF_PRICE_LEVEL = "price_level_entity"
 CONF_BASIS = "setpoint_basis"
 CONF_NOTIFY = "notify_service"
 CONF_PRESENCE = "presence_entity"    # aan = iemand thuis
-CONF_PRICE_SERVICE = "price_service"  # bijv. tibber.get_prices     # bijv. mobile_app_iphone (zonder "notify.")
+CONF_PRICE_SERVICE = "price_service"  # bijv. tibber.get_prices
+CONF_SCHEDULES = "warm_periods"       # extra warme periodes per kamer (tekst)     # bijv. mobile_app_iphone (zonder "notify.")
 
 # sleutel: (min, max, stap, label NL, label EN) - standaardwaarden staan in engine.Settings
 SETTING_FIELDS = {

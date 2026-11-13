@@ -19,7 +19,8 @@
           "notify_service": "Also send hourly report to notify service (e.g. mobile_app_my_phone, optional)",
           "trv_sensor_rooms": "Rooms measuring with the TRV's own sensor (filtered, lower weight)",
           "presence_entity": "Presence (on = someone home)",
-          "price_service": "Price forecast service (e.g. tibber.get_prices)"
+          "price_service": "Price forecast service (e.g. tibber.get_prices)",
+          "warm_periods": "Warm periods per room, one line per room: climate.bathroom | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00"
         }
       }
     },
@@ -69,7 +70,8 @@
           "morning_weekday": "Weekday morning from (hh:mm)",
           "morning_weekend": "Weekend morning from (hh:mm)",
           "presence_entity": "Presence (on = someone home)",
-          "price_service": "Price forecast service (e.g. tibber.get_prices)"
+          "price_service": "Price forecast service (e.g. tibber.get_prices)",
+          "warm_periods": "Warm periods per room, one line per room: climate.bathroom | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00"
         }
       }
     }

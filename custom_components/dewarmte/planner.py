@@ -31,6 +31,7 @@ class PlanSettings:
     morning_weekday: str = "05:00"
     morning_weekend: str = "07:00"
     override_max_h: float = 3.0     # handmatige wijziging respecteren tot het volgende blok, max. zo lang
+    lead_min: float = 30.0          # warme periode zoveel eerder beginnen (opwarmtijd)
     dhw_rank_max: float = 0.10      # goedkoopste 10 % van het komende etmaal: boiler naar maximum
     dhw_rank_mid: float = 0.25      # goedkoopste 25 %: boiler naar middenstand
 
@@ -49,13 +50,61 @@ def _hm(text: str) -> tuple[int, int]:
     return int(h), int(m)
 
 
+DAYS = {"ma": 0, "di": 1, "wo": 2, "do": 3, "vr": 4, "za": 5, "zo": 6}
+
+
+def _days(spec: str) -> set[int]:
+    spec = spec.strip().lower()
+    if spec in ("dagelijks", "elke dag", "alle"):
+        return set(range(7))
+    out: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, b = (DAYS[x.strip()] for x in part.split("-", 1))
+            out |= set(range(a, b + 1)) if a <= b else set(range(a, 7)) | set(range(0, b + 1))
+        elif part:
+            out.add(DAYS[part])
+    return out
+
+
+def parse_schedules(text: str | None) -> dict[str, dict]:
+    """Regels: `climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:00-22:30`."""
+    out: dict[str, dict] = {}
+    for line in (text or "").replace(";", "\n").splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 3 or not parts[0].startswith("climate."):
+            continue
+        try:
+            temp = float(parts[1].replace(",", "."))
+        except ValueError:
+            continue
+        periods = []
+        for grp in parts[2:]:
+            if " " not in grp:
+                continue
+            day_spec, ranges = grp.split(" ", 1)
+            days = _days(day_spec)
+            for r in ranges.split(","):
+                if "-" not in r:
+                    continue
+                a, b = r.strip().split("-", 1)
+                ha, ma = _hm(a.strip())
+                hb, mb = _hm(b.strip())
+                periods.append((days, ha * 60 + ma, hb * 60 + mb))
+        if periods:
+            out[parts[0]] = {"temp": temp, "periods": periods}
+    return out
+
+
 def _q(x: float, step: float) -> float:
     return round(round(x / step) * step, 2)
 
 
 class PricePlanner:
-    def __init__(self, s: PlanSettings, state: dict | None = None) -> None:
+    def __init__(self, s: PlanSettings, state: dict | None = None, schedules: str | None = None) -> None:
         self.s = s
+        self.schedules = parse_schedules(schedules)
         st = state or {}
         self.cool_rate: dict[str, float] = dict(st.get("cool_rate") or {})   # K/u (positief = afkoelen)
         self.prices: list[tuple[float, float]] = []                           # (epoch start, €/kWh)
@@ -152,12 +201,12 @@ class PricePlanner:
         hm = (dt.hour, dt.minute)
         return "nacht" if (hm >= ns or hm < mh) else "dag"
 
-    def _next_boundary(self, wall: float) -> float:
+    def _next_boundary(self, wall: float, room: str | None = None) -> float:
         t = wall
-        b = self.block(wall)
-        for _ in range(48 * 4):
-            t += 900
-            if self.block(t) != b:
+        b = (self.block(wall), self.warm_period(room, wall) if room else None)
+        for _ in range(48 * 12):
+            t += 300
+            if (self.block(t), self.warm_period(room, t) if room else None) != b:
                 return t
         return wall + 12 * 3600
 
@@ -187,6 +236,24 @@ class PricePlanner:
         except (TypeError, ValueError):
             return None
 
+    def warm_period(self, room: str, wall: float) -> float | None:
+        """Doel van een actieve warme periode (inclusief voorloop), anders None."""
+        sch = self.schedules.get(room)
+        if not sch:
+            return None
+        lead = self.s.lead_min
+        for back in (0, 1):                      # ook periodes die gisteren begonnen (over middernacht)
+            dt = datetime.fromtimestamp(wall) - timedelta(days=back)
+            minute = (datetime.fromtimestamp(wall) - dt.replace(hour=0, minute=0, second=0, microsecond=0)
+                      ).total_seconds() / 60
+            for days, start, end in sch["periods"]:
+                if dt.weekday() not in days:
+                    continue
+                stop = end if end > start else end + 1440
+                if start - lead <= minute < stop:
+                    return sch["temp"]
+        return None
+
     def room_target(self, room: str, presets: dict, home: bool, wall: float,
                     current_target: float | None) -> tuple[float | None, str]:
         s = self.s
@@ -194,18 +261,22 @@ class PricePlanner:
         base = self.base_target(presets, night, home)
         if base is None:
             return None, "geen preset-temperaturen"
+        warm = self.warm_period(room, wall) if home else None
         # handmatige wijziging respecteren
         last = self.last_written.get(room)
         if last and current_target is not None and abs(current_target - last[0]) > 0.05 and wall - last[1] > 120:
-            until = min(self._next_boundary(wall), wall + s.override_max_h * 3600)
+            until = min(self._next_boundary(wall, room), wall + s.override_max_h * 3600)
             self.override_until.setdefault(room, until)
         if room in self.override_until:
             if wall < self.override_until[room]:
                 return None, "handmatig aangepast: tijdelijk niet sturen"
             self.override_until.pop(room, None)
+        label = f"{'nacht (eco)' if night else 'dag (comfort)'}{'' if home else ', afwezig'}"
+        if warm is not None:
+            base, label = warm, "warme periode"
         target = _q(base + self.offset, 0.5 if s.step >= 0.5 else s.step)
         target = max(base - s.band_down, min(base + s.band_up, target))
-        return target, f"{'nacht (eco)' if night else 'dag (comfort)'}{'' if home else ', afwezig'} {base:g} + prijs {self.offset:+g}"
+        return target, f"{label} {base:g} + prijs {self.offset:+g}"
 
     def wrote(self, room: str, target: float, wall: float) -> None:
         self.last_written[room] = (target, wall)
