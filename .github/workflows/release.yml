@@ -1,10 +1,9 @@
-# Maakt automatisch een GitHub-release zodra de versie in manifest.json verandert.
+# Maakt bij elke push op main een GitHub-release voor de versie in manifest.json, als die nog niet bestaat.
 # HACS ziet die release als update.
 name: Release
 on:
   push:
     branches: [main]
-    paths: ["custom_components/dewarmte/manifest.json"]
   workflow_dispatch:
 permissions:
   contents: write
