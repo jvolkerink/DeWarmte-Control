@@ -71,7 +71,8 @@
           "morning_weekend": "Weekend morning from (hh:mm)",
           "presence_entity": "Presence (on = someone home)",
           "price_service": "Price forecast service (e.g. tibber.get_prices)",
-          "warm_periods": "Warm periods per room, one line per room: climate.bathroom | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00"
+          "warm_periods": "Warm periods per room, one line per room: climate.bathroom | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00",
+          "legionella_auto_days": "Automatic disinfection after days without ≥ 60 °C (0 = off)"
         }
       }
     }

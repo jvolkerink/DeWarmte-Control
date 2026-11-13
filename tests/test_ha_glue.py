@@ -213,6 +213,14 @@ async def main():
     assert c.disinfect is None and writes[-1][:2] == (2, 6) and writes[-1][2] != 62
     assert any(n[0] == "dewarmte_desinfectie" and "geslaagd" in n[1] for n in notes)
 
+    # ---- automatische desinfectie: 8 dagen niet heet -> start vanzelf (ook zonder goedkoopste moment)
+    c.engine.last_hot = time.time() - 8.2 * 86400; PT[53] = 50
+    c._last_plan = 0; await c._async_update_data()
+    assert c.disinfect is not None and "automatisch" in c.actions[-1]["why"], c.actions[-1]
+    await c.async_stop_disinfection()
+    c._last_plan = 0; await c._async_update_data()
+    assert c.disinfect is None                                                  # niet meteen opnieuw (max 1x per dag)
+
     # ---- dashboard: elke verwijzing moet naar een echte entiteit wijzen
     ids = {("sensor", d.key) for d in sens.SENSORS + sens.EXTRA} | {("binary_sensor", d.key) for d in binm.BINARIES}
     ids |= {("sensor", x.key) for x in regs.RAW if not isinstance(x.bit, int)} | {("binary_sensor", x.key) for x in regs.RAW if isinstance(x.bit, int)}

@@ -73,6 +73,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         self._last_price_fetch = 0.0
         self._price_error: str | None = None
         self.plan_rooms: dict[str, dict] = {}
+        self._auto_dis_t = 0.0
 
     # ------------------------------------------------------------ levenscyclus
     async def async_setup(self) -> None:
@@ -228,7 +229,19 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
             raise HomeAssistantError(f"Schrijven mislukt: {item['error']}")
 
     # ------------------------------------------------------------ handmatige desinfectie
-    async def async_start_disinfection(self) -> None:
+    async def _auto_disinfection(self, decision: dict) -> None:
+        """Na X dagen zonder ≥ 60 °C: desinfectie op het goedkoopste moment (uiterlijk een dag later)."""
+        days, limit = decision.get("legionella_days"), self.settings.legionella_auto_days
+        if (not limit or days is None or days < limit or self.disinfect or not self.control_enabled
+                or time.time() - self._auto_dis_t < 86400):
+            return
+        rank = self.planner.rank_now(time.time())
+        if (rank is not None and rank <= 0.1) or days >= limit + 1 or (rank is None and days >= limit):
+            self._auto_dis_t = time.time()
+            await self.async_start_disinfection(f"automatisch: {days:.1f} dagen niet ≥ 60 °C"
+                                                + ("" if rank is None else f", prijsrang {rank:.0%}"))
+
+    async def async_start_disinfection(self, reason: str = "handmatig") -> None:
         if self.disinfect:
             return
         v = self._last_values.get("raw", {})
@@ -236,7 +249,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         hold = int(min(90, max(10, v.get("r2_11") or 30)))
         prev = self._last_values.get("pt_set")
         item = await self._write_now(2, 6, target, "desinfectie gestart", "?" if prev is None else f"{int(prev)} °C",
-                                     f"{target} °C", f"vasthouden {hold} min, alleen warmtepomp")
+                                     f"{target} °C", f"{reason}; vasthouden {hold} min, alleen warmtepomp")
         if not item["ok"]:
             await self._notify_both("DeWarmte: desinfectie niet gestart", f"Schrijven mislukt: {item['error']}")
             return
@@ -245,7 +258,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         grid = v.get("r2_25")
         warn = f" Let op: 'Set temperature when powered by grid' (reg 25) staat op {int(grid)} °C." if grid and grid < target else ""
         await self._notify_both("DeWarmte: desinfectie gestart",
-                                f"Pomp T warmt op tot {target} °C en houdt dat {hold} min vast (zonder element).{warn}")
+                                f"{reason.capitalize()}. Pomp T warmt op tot {target} °C en houdt dat {hold} min vast (zonder element).{warn}")
         self.async_update_listeners()
 
     async def async_stop_disinfection(self, reason: str = "handmatig gestopt", ok: bool = False) -> None:
@@ -506,6 +519,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         decision = self.engine.update(self._inputs(values, status))
         await self._execute(decision)
         await self._disinfect_step(values)
+        await self._auto_disinfection(decision)
         if self.service_until and not self.service_mode:
             self.service_until = 0.0
             _LOGGER.warning("Servicemodus automatisch UIT")

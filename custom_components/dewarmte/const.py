@@ -1,6 +1,6 @@
 """Constanten (geen Home Assistant-imports, zodat ze ook los te testen zijn)."""
 DOMAIN = "dewarmte"
-VERSION = "3.4.1"
+VERSION = "3.4.2"
 PLATFORMS = ["sensor", "binary_sensor", "switch", "button", "number"]
 
 CONF_UP_TOPIC = "up_topic"
@@ -27,6 +27,7 @@ SETTING_FIELDS = {
     "valve_high": (60, 100, 5, "Aanvoer omhoog als de meest open klep gemiddeld boven (%) staat", "Raise supply when most-open valve averages above (%)"),
     "valve_low": (20, 90, 5, "Aanvoer omlaag als de meest open klep gemiddeld onder (%) staat", "Lower supply when most-open valve averages below (%)"),
     "ff_k": (0, 2, 0.1, "Aanvoer mee bij preset-stap (K per K kamerdoel)", "Supply follow on preset step (K per K room target)"),
+    "legionella_auto_days": (0, 21, 1, "Automatische desinfectie na zoveel dagen zonder ≥ 60 °C (0 = uit)", "Automatic disinfection after days without ≥ 60 °C (0 = off)"),
     "silent_above": (-5, 10, 0.5, "Altijd Stil boven (°C buiten)", "Always Silent above (°C outside)"),
     "silent_release": (-5, 10, 0.5, "Opschalen toegestaan onder (°C buiten)", "Scaling allowed below (°C outside)"),
     "dhw_floor": (35, 60, 1, "Tapwater minimum (°C)", "DHW minimum (°C)"),

@@ -87,6 +87,7 @@ class Settings:
     dhw_power_on_w: float = 100.0
     legionella_temp: float = 60.0
     legionella_warn_days: float = 14.0
+    legionella_auto_days: float = 7.0      # automatische desinfectie na zoveel dagen zonder ≥ 60 °C (0 = uit)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Settings":

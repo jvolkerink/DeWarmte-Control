@@ -144,3 +144,8 @@ climate.badkamer | 21 | ma-vr 05:30-07:30, 20:00-22:30 | za-zo 08:00-10:00, 20:0
 Tijdens zo'n periode is het normale doel van die kamer de opgegeven temperatuur (hier 21 °C); de prijs-offset
 geldt ook dan. De periode begint 30 minuten eerder zodat het op tijd warm is. Alleen als er iemand thuis is.
 Dagen: ma, di, wo, do, vr, za, zo, reeksen als `ma-vr`, of `dagelijks`.
+
+## Nieuw in 3.4.2: automatische legionella-cyclus
+Is het tapwater 7 dagen (instelbaar, 0 = uit) niet boven 60 °C geweest, dan start de integratie zelf een
+desinfectie (alleen warmtepomp, zoals de knop) op het goedkoopste moment van het komende etmaal, of uiterlijk
+een dag later. Hooguit één automatische poging per 24 uur; je krijgt er een melding van.
