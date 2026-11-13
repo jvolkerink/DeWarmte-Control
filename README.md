@@ -1,4 +1,4 @@
-# DeWarmte Control 3.3 – rustige regeling, service-instellingen, desinfectie en dashboard
+# DeWarmte Control 3.4 – prijsslim verwarmen, rustige regeling, service-instellingen en dashboard
 
 Eén integration (geen add-on) die via MQTT met je DR164 praat, alle pompen en meters uitleest
 en **zelf regelt**: aanvoersetpoint, aan/uit en vermogensmodus van de SunRain, en het tapwatersetpoint van Pomp T.
@@ -114,3 +114,24 @@ Gewenste aanvoer = stooklijn + preset-correctie + klepbijsturing + geleerde offs
   omhoog én omlaag even makkelijk, maximaal ±2 °C.
 - **Setpoint-hysterese**: het setpoint van de unit verandert pas bij 0,75 °C verschil (minder heen-en-weer).
 Nieuwe sensoren: *Klepbijsturing* (met reden) en *Preset-correctie*.
+
+## Nieuw in 3.4: prijsslim verwarmen
+Schakelaar **Prijsslim verwarmen** (standaard aan). De integratie haalt elk half uur de prijzen van vandaag en
+morgen op via een dienst (standaard `tibber.get_prices`, instelbaar) en stuurt dan zelf:
+
+- **Kamerdoelen (Versatile Thermostat)**: normaal doel = comfort-preset overdag, eco-preset 's nachts
+  (23:00–05:00, weekend tot 07:00), de *away*-varianten als niemand thuis is (optie *Aanwezigheid*).
+  Daarop een prijs-offset: is het nu goedkoper dan gemiddeld in het venster rond nu, dan voorverwarmen
+  (max. +1,5 °C); is het duurder, dan iets laten zakken (max. −1 °C). Stappen van 0,5 °C, minimaal 45 min
+  vasthouden. Een negatieve prijs geeft meteen maximaal voorverwarmen.
+- **Venster leren**: per kamer meet de integratie hoe snel hij afkoelt met dichte klep; daaruit volgt hoe lang
+  het huis een graad extra vasthoudt (2–6 uur). Hoe trager het afkoelt, hoe verder vooruit hij plant.
+- **Aanvoer gaat direct mee** met de prijs-offset (0,5 °C aanvoer per °C kamerdoel).
+- **Boiler**: in de goedkoopste 10 % van het etmaal naar 60 °C, in de goedkoopste 25 % naar 55 °C, anders 45 °C;
+  bij negatieve prijs 70 °C.
+- **Handmatig ingrijpen** (zelf een kamer hoger/lager zetten) wordt gerespecteerd tot het volgende blok
+  (dag/nacht), maximaal 3 uur.
+
+Zet de automation *Nachtverlaging thermostaat* uit zodra je 3.4 gebruikt: de integratie doet dit nu zelf.
+Sensor **Prijs-offset kamers** toont de reden, het geleerde venster, de afkoelsnelheid per kamer en de
+planning voor de komende uren; het tabblad Grafieken heeft een prijs/offset-grafiek en een planningstabel.

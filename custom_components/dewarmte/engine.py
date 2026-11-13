@@ -80,6 +80,8 @@ class Settings:
     dhw_temp_normal: float = 55.0
     dhw_temp_mid: float = 50.0
     dhw_hold_min: float = 30.0
+    dhw_rank_max: float = 0.10
+    dhw_rank_mid: float = 0.25
     dhw_source_min: float = 18.0
     dhw_source_supply: float = 30.0
     dhw_power_on_w: float = 100.0
@@ -137,6 +139,8 @@ class Inputs:
     disinfection: float | None = None
     price: float | None = None
     price_level: str | None = None
+    price_rank: float | None = None         # 0 = goedkoopste moment komend etmaal, 1 = duurste (planner)
+    plan_offset: float | None = None        # prijs-offset van de kamerdoelen (planner)
     critical_ok: bool = False
 
 
@@ -213,6 +217,8 @@ class Engine:
         worst = max(deficits, default=0.0)
         level = (sum(valves) / len(valves)) if valves else None
         ff = self._feedforward(valid, now)
+        if inp.plan_offset is not None:       # planner stuurt de kamers: aanvoer gaat direct mee
+            ff = max(-s.ff_max, min(s.ff_max, s.ff_k * inp.plan_offset))
 
         # tapwater / bronondersteuning Pomp T
         source_support = bool(
@@ -421,8 +427,16 @@ class Engine:
         days = None if self.last_hot is None else round((inp.wall - self.last_hot) / 86400, 1)
         warn = days is not None and days > s.legionella_warn_days
         price = inp.price
+        rank = inp.price_rank
         if price is None:
             want, reason = s.dhw_floor, "geen prijs: minimum"
+        elif price >= 0 and rank is not None:
+            if rank <= s.dhw_rank_max:
+                want, reason = s.dhw_temp_cheap, f"goedkoopste {s.dhw_rank_max:.0%} van het etmaal"
+            elif rank <= s.dhw_rank_mid:
+                want, reason = s.dhw_temp_normal, f"goedkoopste {s.dhw_rank_mid:.0%} van het etmaal"
+            else:
+                want, reason = s.dhw_floor, "niet bij de goedkoopste uren: minimum"
         elif price < 0:
             want, reason = s.dhw_max_negative, "negatieve prijs: maximaal laden"
         elif price < s.price_cheap:

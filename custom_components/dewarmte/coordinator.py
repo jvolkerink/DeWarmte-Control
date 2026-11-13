@@ -16,10 +16,11 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from . import registers as R
 from .bus import ModbusBus, ModbusError, ModbusTimeout, read_registers
-from .const import (CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_OUTDOOR, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
+from .const import (CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_OUTDOOR, CONF_PRESENCE, CONF_PRICE_SERVICE, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
                     CONF_UP_TOPIC, DOMAIN)
 from .engine import Engine, Inputs, Room, Settings
 from .obslog import ObsLog
+from .planner import PlanSettings, PricePlanner
 from .report import HourReport
 from .writes import WriteGuard
 
@@ -66,12 +67,20 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         self._last_decision: dict = {}
         self.service_until = 0.0             # monotonic; servicemodus aan zolang now < service_until
         self.disinfect: dict | None = None   # actieve handmatige desinfectie
+        self.planner = PricePlanner(PlanSettings.from_dict(self.cfg))
+        self.plan_enabled = True
+        self._last_plan = 0.0
+        self._last_price_fetch = 0.0
+        self._price_error: str | None = None
+        self.plan_rooms: dict[str, dict] = {}
 
     # ------------------------------------------------------------ levenscyclus
     async def async_setup(self) -> None:
         stored = await self._store.async_load() or {}
         self.engine = Engine(self.settings, stored)
         self.control_enabled = bool(stored.get("control_enabled", True))
+        self.plan_enabled = bool(stored.get("plan_enabled", True))
+        self.planner = PricePlanner(PlanSettings.from_dict(self.cfg), stored.get("planner"))
         self._unsub = await mqtt.async_subscribe(
             self.hass, self.cfg[CONF_UP_TOPIC], self._on_message, 0, encoding=None)
         self._unsub_time = async_track_time_change(self.hass, self._on_hour, minute=0, second=15)
@@ -93,7 +102,8 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         await mqtt.async_publish(self.hass, self.cfg[CONF_DOWN_TOPIC], frame, qos=0, retain=False)
 
     def _state(self) -> dict:
-        return {**self.engine.export_state(), "control_enabled": self.control_enabled}
+        return {**self.engine.export_state(), "control_enabled": self.control_enabled,
+                "plan_enabled": self.plan_enabled, "planner": self.planner.export_state()}
 
     async def async_set_control(self, enabled: bool, reason: str | None = None) -> None:
         self.control_enabled = enabled
@@ -381,13 +391,118 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
             set_769=v.get("set_heating"), on_773=v.get("on_off"), power_775=v.get("power_mode"),
             dhw_top=v.get("dhw_top"), dhw_set=v.get("pt_set"), t_source_in=v.get("t_source_in"),
             pomp_t_power_w=v.get("pt_pm_w"), disinfection=v.get("disinfection"),
-            price=price, price_level=level, critical_ok=bool(status.get(1, {}).get("ok")))
+            price=price, price_level=level, critical_ok=bool(status.get(1, {}).get("ok")),
+            price_rank=self.planner.rank_now(time.time()) if self.plan_enabled else None,
+            plan_offset=self.planner.offset if self._plan_active() else None)
+
+    # ------------------------------------------------------------ prijsplanner
+    def _plan_active(self) -> bool:
+        return self.plan_enabled and self.control_enabled and bool(self.planner.prices)
+
+    async def async_set_plan(self, enabled: bool) -> None:
+        self.plan_enabled = enabled
+        await self._store.async_save(self._state())
+        self.async_update_listeners()
+
+    def _home(self) -> bool:
+        ent = self.cfg.get(CONF_PRESENCE)
+        if not ent:
+            return True
+        st = self.hass.states.get(ent)
+        if st is None or st.state in ("unavailable", "unknown"):
+            return True
+        return st.state in ("on", "home") or (st.state.isdigit() and int(st.state) > 0)
+
+    async def _fetch_prices(self) -> None:
+        svc = (self.cfg.get(CONF_PRICE_SERVICE) or "tibber.get_prices").strip()
+        if "." not in svc:
+            return
+        domain, name = svc.split(".", 1)
+        if not self.hass.services.has_service(domain, name):
+            self._price_error = f"dienst {svc} niet gevonden"
+            return
+        today = time.strftime("%Y-%m-%d")
+        end = time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400))
+        try:
+            resp = await self.hass.services.async_call(
+                domain, name, {"start": f"{today} 00:00:00", "end": f"{end} 23:59:59"},
+                blocking=True, return_response=True)
+        except Exception as err:  # noqa: BLE001 - prijzen zijn optioneel
+            self._price_error = str(err)
+            _LOGGER.warning("Prijzen ophalen via %s mislukt: %s", svc, err)
+            return
+        rows = []
+        prices = (resp or {}).get("prices", resp)
+        if isinstance(prices, dict):
+            for val in prices.values():
+                if isinstance(val, list):
+                    rows = val
+                    break
+        elif isinstance(prices, list):
+            rows = prices
+        n = self.planner.set_prices(rows, time.time())
+        self._price_error = None if n else "geen prijzen in antwoord"
+
+    async def _plan_step(self) -> None:
+        now = time.time()
+        if now - self._last_price_fetch >= 1800 or (not self.planner.prices and now - self._last_price_fetch >= 300):
+            self._last_price_fetch = now
+            await self._fetch_prices()
+        if now - self._last_plan < 60:
+            return
+        self._last_plan = now
+        p = self.planner
+        p.update_offset(now)
+        home = self._home()
+        rooms: dict[str, dict] = {}
+        for ent in self.cfg.get(CONF_ROOMS, []):
+            st = self.hass.states.get(ent)
+            if st is None or st.state in ("unavailable", "unknown", "off"):
+                rooms[ent] = {"status": "niet beschikbaar"}
+                continue
+            a = st.attributes
+            cur_t, valve = _f(a.get("current_temperature")), _f(a.get("valve_open_percent"))
+            p.learn(ent, cur_t, valve, now)
+            current = _f(a.get("temperature"))
+            last = p.last_written.get(ent)
+            if last and current is not None and abs(current - last[0]) <= 0.05:
+                p.override_until.pop(ent, None)          # weer terug op ons doel (bijv. na raam dicht)
+            target, why = p.room_target(ent, a.get("preset_temperatures") or {}, home, now, current)
+            rooms[ent] = {"doel": target, "nu": current, "reden": why,
+                          "afkoeling_k_per_uur": p.cool_rate.get(ent)}
+            if target is None or not self._plan_active() or current is None or abs(target - current) < 0.25:
+                if target is not None and current is not None and abs(target - current) < 0.25 and not last:
+                    p.wrote(ent, current, now)
+                continue
+            try:
+                await self.hass.services.async_call("climate", "set_temperature",
+                                                    {"entity_id": ent, "temperature": target}, blocking=True)
+                ok, err = True, None
+                p.wrote(ent, target, now)
+            except Exception as exc:  # noqa: BLE001
+                ok, err = False, str(exc)
+            item = {"time": time.strftime("%H:%M"), "name": f"kamerdoel {a.get('friendly_name', ent)}",
+                    "register": ent, "old": f"{current:g} °C", "new": f"{target:g} °C", "why": why,
+                    "ok": ok, "error": err}
+            self.report.action(item)
+            self.actions = (self.actions + [item])[-30:]
+            _LOGGER.info("Kamerdoel %s: %s → %s (%s)%s", ent, current, target, why, "" if ok else f" FOUT {err}")
+        self.plan_rooms = rooms
+
+    def plan_info(self) -> dict:
+        p = self.planner
+        now = time.time()
+        return {"actief": self._plan_active(), "reden": p.reason, "blok": p.block(now), "thuis": self._home(),
+                "venster_uur": round(p.window_h, 1), "prijsrang_nu": p.rank_now(now),
+                "prijs_nu": p.price_now(now), "fout": self._price_error, "kamers": self.plan_rooms,
+                "afkoelsnelheid": p.cool_rate, "planning": p.plan(now)}
 
     # ------------------------------------------------------------ hoofdcyclus
     async def _async_update_data(self) -> dict:
         await self._poll()
         values = R.decode_all(self._raw, time.monotonic())
         status = self._status()
+        await self._plan_step()
         decision = self.engine.update(self._inputs(values, status))
         await self._execute(decision)
         await self._disinfect_step(values)

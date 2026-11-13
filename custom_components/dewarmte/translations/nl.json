@@ -17,7 +17,9 @@
           "price_entity": "Stroomprijs-sensor EUR/kWh (optioneel)",
           "price_level_entity": "Prijsniveau-sensor (optioneel)",
           "notify_service": "Melding uurrapport ook naar notify-dienst (bijv. mobile_app_mijn_telefoon, optioneel)",
-          "trv_sensor_rooms": "Kamers die meten met de sensor in de TRV (trager en minder zwaar meetellen)"
+          "trv_sensor_rooms": "Kamers die meten met de sensor in de TRV (trager en minder zwaar meetellen)",
+          "presence_entity": "Aanwezigheid (aan = iemand thuis)",
+          "price_service": "Prijsvoorspelling-dienst (bijv. tibber.get_prices)"
         }
       }
     },
@@ -58,7 +60,16 @@
           "trv_sensor_rooms": "Kamers die meten met de sensor in de TRV (trager en minder zwaar meetellen)",
           "valve_high": "Aanvoer omhoog als de meest open klep gemiddeld boven (%) staat",
           "valve_low": "Aanvoer omlaag als de meest open klep gemiddeld onder (%) staat",
-          "ff_k": "Aanvoer mee bij preset-stap (K per K kamerdoel)"
+          "ff_k": "Aanvoer mee bij preset-stap (K per K kamerdoel)",
+          "band_up": "Prijsslim: max. voorverwarmen boven normaal doel (K)",
+          "band_down": "Prijsslim: max. laten zakken onder normaal doel (K)",
+          "gain": "Prijsslim: gevoeligheid voor prijsverschil",
+          "hold_min": "Prijsslim: minimale duur van een kamerdoel (min)",
+          "night_start": "Nachtverlaging vanaf (uu:mm)",
+          "morning_weekday": "Ochtend werkdag vanaf (uu:mm)",
+          "morning_weekend": "Ochtend weekend vanaf (uu:mm)",
+          "presence_entity": "Aanwezigheid (aan = iemand thuis)",
+          "price_service": "Prijsvoorspelling-dienst (bijv. tibber.get_prices)"
         }
       }
     }

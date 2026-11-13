@@ -264,6 +264,82 @@ def test_hour_report_text():
     assert "1 wijziging" in title and "28 °C → 29 °C" in text and data["cop_uur"] == 4.0
 
 
+# ---- 3.4: prijsplanner
+pl = load("planner")
+from datetime import datetime as _dt, timedelta as _td
+
+def _prices(start, values, slot=3600):
+    return [{"start_time": _dt.fromtimestamp(start + i * slot).isoformat(), "price": v} for i, v in enumerate(values)]
+
+def _day_start():
+    d = _dt.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    return d.timestamp()
+
+def test_planner_preheats_before_expensive_and_sets_back_in_expensive():
+    t0 = _day_start()
+    p = pl.PricePlanner(pl.PlanSettings())
+    vals = [0.30] * 12 + [0.25, 0.25, 0.25] + [0.50] * 5 + [0.30] * 28     # 12:00-15:00 goedkoop, 15-20 duur
+    p.set_prices(_prices(t0, vals), t0)
+    off_cheap, why = p.raw_offset(t0 + 13.5 * 3600)
+    off_exp, _ = p.raw_offset(t0 + 15.5 * 3600)
+    assert off_cheap > 0.5 and "voorverwarmen" in why
+    assert off_exp < 0
+    assert -1.0 <= off_exp and off_cheap <= 1.5                                # binnen de band
+
+def test_planner_negative_price_max_preheat_and_rank():
+    t0 = _day_start()
+    p = pl.PricePlanner(pl.PlanSettings())
+    p.set_prices(_prices(t0, [0.3] * 10 + [-0.05] + [0.3] * 30), t0)
+    assert p.raw_offset(t0 + 10 * 3600 + 600)[0] == 1.5
+    assert p.rank_now(t0 + 10 * 3600 + 600) == 0.0
+
+def test_planner_hold_prevents_flapping():
+    t0 = _day_start() + 3600
+    p = pl.PricePlanner(pl.PlanSettings())
+    vals = [0.30, 0.20, 0.40, 0.20, 0.40, 0.20, 0.40] * 6                     # wild op en neer
+    p.set_prices(_prices(t0 - 3600, vals, 900), t0)
+    changes, last = 0, None
+    for i in range(0, 4 * 3600, 60):
+        o = p.update_offset(t0 + i)
+        if last is not None and o != last:
+            changes += 1
+        last = o
+    assert changes <= 4 * 60 / 45 + 1                                           # hooguit eens per 45 min
+
+def test_planner_room_targets_night_presence_and_override():
+    p = pl.PricePlanner(pl.PlanSettings())
+    presets = {"comfort_temp": 20.5, "eco_temp": 19.0, "comfort_away_temp": 19.5, "eco_away_temp": 18.0}
+    day = _dt.now().replace(hour=14, minute=0, second=0, microsecond=0).timestamp()
+    night = _dt.now().replace(hour=2, minute=0, second=0, microsecond=0).timestamp()
+    p.offset = 1.0
+    assert p.room_target("k", presets, True, day, None)[0] == 21.5
+    assert p.room_target("k", presets, False, day, None)[0] == 20.5
+    assert p.room_target("k", presets, True, night, None)[0] == 20.0
+    p.offset = -1.0
+    assert p.room_target("k", presets, True, day, None)[0] == 19.5
+    p.wrote("k", 19.5, day)
+    tgt, why = p.room_target("k", presets, True, day + 600, 21.0)                # iemand zette 21 °C
+    assert tgt is None and "handmatig" in why
+    assert p.room_target("k", presets, True, day + 4 * 3600, 21.0)[0] == 19.5   # na max. 3 u weer sturen
+
+def test_planner_learns_cooling_window():
+    p = pl.PricePlanner(pl.PlanSettings())
+    t = 1_000_000.0
+    for i in range(0, 3 * 3600, 300):                                            # 0,5 K/u afkoelen, klep dicht
+        p.learn("k", 20.0 - 0.5 * i / 3600, 0, t + i)
+    assert abs(p.cool_rate["k"] - 0.5) < 0.05 and abs(p.window_h - 2.0) < 0.2
+    p2 = pl.PricePlanner(pl.PlanSettings(), p.export_state())
+    assert p2.cool_rate == p.cool_rate
+
+def test_engine_dhw_uses_price_rank_and_plan_feedforward():
+    e = eng.Engine(eng.Settings())
+    d = e.update(inp(0, dhw_top=46, dhw_set=45, price=0.30, price_rank=0.05, plan_offset=1.0))
+    assert d["dhw_setpoint_advice"] == 60.0 and d["feedforward"] == 0.5
+    e = eng.Engine(eng.Settings())
+    d = e.update(inp(0, dhw_top=46, dhw_set=45, price=0.30, price_rank=0.6))
+    assert d["dhw_setpoint_advice"] == 45.0
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

@@ -17,7 +17,9 @@
           "price_entity": "Electricity price sensor EUR/kWh (optional)",
           "price_level_entity": "Price level sensor (optional)",
           "notify_service": "Also send hourly report to notify service (e.g. mobile_app_my_phone, optional)",
-          "trv_sensor_rooms": "Rooms measuring with the TRV's own sensor (filtered, lower weight)"
+          "trv_sensor_rooms": "Rooms measuring with the TRV's own sensor (filtered, lower weight)",
+          "presence_entity": "Presence (on = someone home)",
+          "price_service": "Price forecast service (e.g. tibber.get_prices)"
         }
       }
     },
@@ -58,7 +60,16 @@
           "trv_sensor_rooms": "Rooms measuring with the TRV's own sensor (filtered, lower weight)",
           "valve_high": "Raise supply when most-open valve averages above (%)",
           "valve_low": "Lower supply when most-open valve averages below (%)",
-          "ff_k": "Supply follow on preset step (K per K room target)"
+          "ff_k": "Supply follow on preset step (K per K room target)",
+          "band_up": "Price: max preheat above normal target (K)",
+          "band_down": "Price: max setback below normal target (K)",
+          "gain": "Price: sensitivity to price difference",
+          "hold_min": "Price: minimum hold of a room target (min)",
+          "night_start": "Night setback from (hh:mm)",
+          "morning_weekday": "Weekday morning from (hh:mm)",
+          "morning_weekend": "Weekend morning from (hh:mm)",
+          "presence_entity": "Presence (on = someone home)",
+          "price_service": "Price forecast service (e.g. tibber.get_prices)"
         }
       }
     }

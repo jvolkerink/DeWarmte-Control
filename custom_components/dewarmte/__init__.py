@@ -1,4 +1,4 @@
-"""DeWarmte Control 3.2 - regeling van SunRain en Pomp T via DR164/MQTT."""
+"""DeWarmte Control 3.4 - regeling van SunRain en Pomp T via DR164/MQTT."""
 from __future__ import annotations
 
 from homeassistant.components import mqtt
@@ -16,7 +16,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util import slugify
 
 from . import dashboard, schema
-from .const import CONF_ROOMS, DOMAIN, PLATFORMS
+from .const import CONF_PRICE, CONF_ROOMS, DOMAIN, PLATFORMS
 from .coordinator import DeWarmteCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,7 +51,7 @@ async def _write_dashboard(hass: HomeAssistant, entry: ConfigEntry) -> None:
         return eid
 
     cfg = {**entry.data, **entry.options}
-    content = dashboard.build(resolve, list(cfg.get(CONF_ROOMS, [])))
+    content = dashboard.build(resolve, list(cfg.get(CONF_ROOMS, [])), cfg.get(CONF_PRICE))
     www, out = hass.config.path("www", "dewarmte"), hass.config.path("dewarmte", "dashboard.yaml")
 
     def _write() -> None:

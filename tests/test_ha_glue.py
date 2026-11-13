@@ -101,7 +101,18 @@ class Hass:
     class services:
         calls = []
         @staticmethod
-        async def async_call(domain, svc, data, blocking=False): Hass.services.calls.append((domain, svc, data))
+        def has_service(domain, svc): return (domain, svc) == ("tibber", "get_prices")
+        @staticmethod
+        async def async_call(domain, svc, data, blocking=False, return_response=False):
+            Hass.services.calls.append((domain, svc, data))
+            if (domain, svc) == ("tibber", "get_prices"):
+                import datetime as _d
+                h0 = time.time() - time.time() % 3600
+                rows = [{"start_time": _d.datetime.fromtimestamp(h0 + i * 900).isoformat(),
+                         "price": 0.20 if i < 4 else 0.50} for i in range(-8, 96)]
+                return {"prices": {"Thuis": rows}}
+            if (domain, svc) == ("climate", "set_temperature"):
+                Hass.states.d[data["entity_id"]].attributes["temperature"] = data["temperature"]
 class Entry:
     data = {"up_topic": "dr164/up", "down_topic": "dr164/down", "rooms": ["climate.a", "climate.b", "climate.woonkamer"],
             "outdoor_entity": "sensor.buiten", "price_entity": "sensor.prijs", "notify_service": "notify.mobile_app_test"}
@@ -110,8 +121,10 @@ class Entry:
 async def main():
     h = Hass()
     h.states.d = {
-        "climate.a": St("heat", friendly_name="Badkamer", current_temperature=19.4, temperature=20.5, valve_open_percent=55),
-        "climate.b": St("heat", friendly_name="Finn", current_temperature=20.6, temperature=20.5, valve_open_percent=0),
+        "climate.a": St("heat", friendly_name="Badkamer", current_temperature=19.4, temperature=20.5, valve_open_percent=55,
+                        preset_temperatures={"comfort_temp": 20.5, "eco_temp": 19.0, "comfort_away_temp": 19.5, "eco_away_temp": 18.0}),
+        "climate.b": St("heat", friendly_name="Finn", current_temperature=20.6, temperature=20.5, valve_open_percent=0,
+                        preset_temperatures={"comfort_temp": 18.5, "eco_temp": 17.5}),
         "climate.woonkamer": St("off", friendly_name="Woonkamer", current_temperature=None, temperature=None, valve_open_percent=0),
         "sensor.buiten": St("1.5"), "sensor.prijs": St("0.23")}
     # kortere time-outs zodat de test snel loopt
@@ -123,7 +136,7 @@ async def main():
         data = await c._async_update_data()
         await asyncio.sleep(0)
     d, v, s = data["d"], data["v"], data["s"]
-    assert v["t_supply"] == 23 and v["set_heating"] == 30 and v["power_mode"] == 2
+    assert v["t_supply"] == 23 and v["set_heating"] == 31 and v["power_mode"] == 2   # 30,25 + 0,75 preset-correctie
     assert s[16]["ok"] is False and s[1]["ok"] is True and d["blocks"] == []   # slave 16 stuk blokkeert niets
     assert (1, 281) not in [(k[0], k[1]) for k in c._raw]                    # gat in register blijft ontbreken
     assert d["outdoor_used"] == 1.5 and d["season_heating"] is True
@@ -135,15 +148,28 @@ async def main():
     for desc in binm.BINARIES:
         assert desc.value_fn({**data, "c": c}) in (True, False, None), desc.key
     # schrijven: alleen toegestane registers, met echo bevestigd
-    assert sorted(writes) == [(1, 769, 30), (2, 6, 55)], writes
-    assert c._raw[(1, 769)][0] == 30 and len(c.actions) == 2 and all(a["ok"] for a in c.actions)
+    assert sorted(writes) == [(1, 769, 31), (2, 6, 60)], writes            # goedkoopste uur: boiler naar 60
+    assert c._raw[(1, 769)][0] == 31 and len(c.actions) >= 3 and all(a["ok"] for a in c.actions), c.actions
+    # prijsplanner: nu goedkoop, straks duur -> voorverwarmen, kamerdoelen via climate.set_temperature
+    assert c.planner.offset == 1.5 and d["feedforward"] == 0.75
+    night = c.planner.block(time.time()) == "nacht"
+    assert h.states.d["climate.a"].attributes["temperature"] == (19.0 if night else 20.5) + 1.5
+    assert h.states.d["climate.b"].attributes["temperature"] == (17.5 if night else 18.5) + 1.5
+    info = c.plan_info(); assert info["actief"] and len(info["planning"]) >= 20 and "climate.woonkamer" in info["kamers"]
     assert {(f[0], int.from_bytes(f[2:4], "big")) for f in published if f[1] == 6} <= set(load("writes").ALLOWED)
     assert all(f[1] in (3, 6) for f in published)
     # schakelaar uit -> geen writes meer
     await c.async_set_control(False, "test"); MAPS[1][769] = 25
     for _ in range(2): await c._async_update_data()
     assert len(writes) == 2
+    lw = c.planner.last_written["climate.a"]; c.planner.last_written["climate.a"] = (lw[0], lw[1] - 300)
+    h.states.d["climate.a"].attributes["temperature"] = 21.0                  # gebruiker past zelf aan
+    c._last_plan = 0; await c._async_update_data()
+    assert h.states.d["climate.a"].attributes["temperature"] == 21.0          # regeling uit: niets overschreven
     await c.async_set_control(True)
+    c._last_plan = 0; await c._async_update_data()
+    assert h.states.d["climate.a"].attributes["temperature"] == 21.0          # handmatige wijziging gerespecteerd
+    assert "handmatig" in c.plan_rooms["climate.a"]["reden"]
     # uurrapport
     assert timers and timers[0][1] == {"minute": 0, "second": 15}
     await timers[0][0]()
@@ -190,7 +216,7 @@ async def main():
     # ---- dashboard: elke verwijzing moet naar een echte entiteit wijzen
     ids = {("sensor", d.key) for d in sens.SENSORS + sens.EXTRA} | {("binary_sensor", d.key) for d in binm.BINARIES}
     ids |= {("sensor", x.key) for x in regs.RAW if not isinstance(x.bit, int)} | {("binary_sensor", x.key) for x in regs.RAW if isinstance(x.bit, int)}
-    ids |= {("switch", "control"), ("switch", "service_mode"), ("button", "report_now"), ("button", "disinfect_start"), ("button", "disinfect_stop")}
+    ids |= {("switch", "control"), ("switch", "service_mode"), ("switch", "plan"), ("button", "report_now"), ("button", "disinfect_start"), ("button", "disinfect_stop")}
     ids |= {("number", f"n{k[0]}_{k[1]}") for k in load("writes").SERVICE}
     bad = []
     def resolve(platform, key):

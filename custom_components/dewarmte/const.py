@@ -1,6 +1,6 @@
 """Constanten (geen Home Assistant-imports, zodat ze ook los te testen zijn)."""
 DOMAIN = "dewarmte"
-VERSION = "3.3.0"
+VERSION = "3.4.0"
 PLATFORMS = ["sensor", "binary_sensor", "switch", "button", "number"]
 
 CONF_UP_TOPIC = "up_topic"
@@ -11,7 +11,9 @@ CONF_OUTDOOR = "outdoor_entity"
 CONF_PRICE = "price_entity"
 CONF_PRICE_LEVEL = "price_level_entity"
 CONF_BASIS = "setpoint_basis"
-CONF_NOTIFY = "notify_service"     # bijv. mobile_app_iphone (zonder "notify.")
+CONF_NOTIFY = "notify_service"
+CONF_PRESENCE = "presence_entity"    # aan = iemand thuis
+CONF_PRICE_SERVICE = "price_service"  # bijv. tibber.get_prices     # bijv. mobile_app_iphone (zonder "notify.")
 
 # sleutel: (min, max, stap, label NL, label EN) - standaardwaarden staan in engine.Settings
 SETTING_FIELDS = {
@@ -35,3 +37,13 @@ SETTING_FIELDS = {
     "dhw_source_min": (5, 30, 1, "Pomp T: bronwater minimaal (°C)", "Pomp T: minimum source water (°C)"),
     "dhw_source_supply": (20, 45, 1, "Aanvoer tijdens bronondersteuning Pomp T (°C)", "Supply during Pomp T source support (°C)"),
 }
+
+# Prijsplanner (planner.PlanSettings): sleutel -> (min, max, stap, NL, EN)
+PLAN_FIELDS = {
+    "band_up": (0, 3, 0.5, "Prijsslim: max. voorverwarmen boven normaal doel (K)", "Price: max preheat above normal target (K)"),
+    "band_down": (0, 3, 0.5, "Prijsslim: max. laten zakken onder normaal doel (K)", "Price: max setback below normal target (K)"),
+    "gain": (0.5, 6, 0.5, "Prijsslim: gevoeligheid voor prijsverschil", "Price: sensitivity to price difference"),
+    "hold_min": (15, 180, 15, "Prijsslim: minimale duur van een kamerdoel (min)", "Price: minimum hold of a room target (min)"),
+}
+PLAN_TIMES = {"night_start": "Nachtverlaging vanaf (uu:mm)", "morning_weekday": "Ochtend werkdag vanaf (uu:mm)",
+              "morning_weekend": "Ochtend weekend vanaf (uu:mm)"}

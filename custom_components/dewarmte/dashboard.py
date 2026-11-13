@@ -82,7 +82,7 @@ def _s(entity: str, name: str, minutes: int = 5, **kw) -> dict:
     return d
 
 
-def build(r: Resolve, rooms: list[str]) -> dict:
+def build(r: Resolve, rooms: list[str], price_entity: str | None = None) -> dict:
     s = lambda k: r("sensor", k)          # noqa: E731
     b = lambda k: r("binary_sensor", k)   # noqa: E731
 
@@ -112,6 +112,8 @@ def build(r: Resolve, rooms: list[str]) -> dict:
         {"type": "grid", "cards": [
             {"type": "heading", "heading": "Regeling"},
             tile(r("switch", "control"), "Regeling actief", tap_action={"action": "toggle"}),
+            tile(r("switch", "plan"), "Prijsslim verwarmen", tap_action={"action": "toggle"}),
+            tile(s("plan_offset"), "Prijs-offset kamers"),
             tile(s("planned"), "Gewenst"),
             tile(s("supply_target"), "Gewenste aanvoer"),
             tile(s("mode_desired"), "Gewenste modus"),
@@ -164,8 +166,20 @@ def build(r: Resolve, rooms: list[str]) -> dict:
         _s(s("pt_set"), "Setpoint", 10, color="#ffd166", curve="stepline", stroke_dash=4)], hours=24,
         yaxis=[{"decimals": 0, "min": "~35", "max": "~65", "apex_config": {"tickAmount": 6}}])
 
+    price_series = [_s(s("plan_offset"), "Offset kamers", 5, color="#7cf0a0", curve="stepline", yaxis_id="k", unit="K")]
+    if price_entity:
+        price_series.insert(0, _s(price_entity, "Prijs", 15, color="#ffd166", curve="stepline", yaxis_id="eur", unit="€/kWh"))
+    price_chart = _apex("Stroomprijs en prijs-offset", price_series, hours=24,
+                        yaxis=[{"id": "eur", "decimals": 2, "min": "~0"},
+                               {"id": "k", "opposite": True, "decimals": 1, "min": -1.5, "max": 2}])
+    plan_md = {"type": "markdown", "title": "Prijsplanning komende uren",
+               "content": "{%% set p = state_attr('%s', 'planning') or [] %%}{{ state_attr('%s', 'reden') }}\n\n"
+                          "| uur | prijs | offset |\n|---|---|---|\n{%% for x in p[:12] %%}| {{ x.uur }} | "
+                          "{{ '%%.3f' | format(x.prijs) }} | {{ '%%+.1f' | format(x.offset) }} |\n{%% endfor %%}"
+                          % (s("plan_offset"), s("plan_offset"))}
+
     charts = {"title": "Grafieken", "path": "grafieken", "icon": "mdi:chart-line",
-              "cards": [temps, comp, power, cop, rooms_chart, valves_chart, dhw_chart]}
+              "cards": [temps, comp, power, cop, price_chart, plan_md, rooms_chart, valves_chart, dhw_chart]}
 
     room_cards: list[dict] = [{"type": "thermostat", "entity": e} for e in rooms]
     valves = {"type": "entities", "title": "Klepstand en doel per kamer", "entities": []}

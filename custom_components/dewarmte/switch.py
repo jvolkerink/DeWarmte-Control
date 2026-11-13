@@ -10,7 +10,7 @@ from .sensor import main_device
 
 async def async_setup_entry(hass, entry, async_add_entities):
     c = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([ControlSwitch(c, entry), ServiceSwitch(c, entry)])
+    async_add_entities([ControlSwitch(c, entry), ServiceSwitch(c, entry), PlanSwitch(c, entry)])
 
 
 class ControlSwitch(CoordinatorEntity, SwitchEntity):
@@ -65,3 +65,26 @@ class ServiceSwitch(CoordinatorEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         self.coordinator.set_service_mode(False)
+
+
+class PlanSwitch(CoordinatorEntity, SwitchEntity):
+    """Prijsslim verwarmen: kamerdoelen (VTherm) en boiler volgen de dynamische prijs."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Prijsslim verwarmen"
+    _attr_icon = "mdi:cash-clock"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_plan"
+        self._attr_device_info = main_device(entry)
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.plan_enabled
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self.coordinator.async_set_plan(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self.coordinator.async_set_plan(False)

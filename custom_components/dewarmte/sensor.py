@@ -110,7 +110,7 @@ def main_device(entry) -> DeviceInfo:
 def slave_device(entry, slave: int) -> DeviceInfo:
     name, maker = SLAVE_DEVICES[slave]
     return DeviceInfo(identifiers={(DOMAIN, f"{entry.entry_id}_{slave}")}, name=name, manufacturer=maker,
-                      model=f"Modbus slave {slave}", via_device=(DOMAIN, entry.entry_id))
+                      model=f"Modbus slave {slave}")
 
 
 def _actions(c):
@@ -123,6 +123,9 @@ EXTRA: tuple[DWSensor, ...] = (
              attrs_fn=lambda d: {"acties": d["c"].actions[-30:]}),
     DWSensor(key="report", name="Laatste uurrapport", value_fn=lambda d: _txt(d["c"].last_report.get("titel")),
              attrs_fn=lambda d: d["c"].last_report),
+    DWSensor(key="plan_offset", name="Prijs-offset kamers", icon="mdi:cash-clock", state_class=M,
+             native_unit_of_measurement=C, value_fn=lambda d: d["c"].planner.offset,
+             attrs_fn=lambda d: d["c"].plan_info()),
     DWSensor(key="disinfection", name="Desinfectie", icon="mdi:bacteria-outline", value_fn=lambda d: d["c"].disinfect_text(),
              attrs_fn=lambda d: d["c"].disinfect or {}),
     DWSensor(key="writes_24h", name="Schrijfacties laatste 24 uur", state_class=M, entity_category=EntityCategory.DIAGNOSTIC,

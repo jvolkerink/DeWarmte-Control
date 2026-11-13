@@ -7,9 +7,10 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import (CONF_BASIS, CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_OUTDOOR, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
+from .const import (CONF_BASIS, CONF_DOWN_TOPIC, CONF_NOTIFY, CONF_PRESENCE, CONF_PRICE_SERVICE, PLAN_FIELDS, PLAN_TIMES, CONF_OUTDOOR, CONF_PRICE, CONF_PRICE_LEVEL, CONF_ROOMS, CONF_TRV_ROOMS,
                     CONF_UP_TOPIC, DOMAIN, SETTING_FIELDS)
 from .engine import Settings
+from .planner import PlanSettings
 
 
 def _entity_schema(defaults: dict) -> dict:
@@ -26,6 +27,10 @@ def _entity_schema(defaults: dict) -> dict:
         vol.Optional(CONF_PRICE, description=sug(CONF_PRICE)): ent("sensor"),
         vol.Optional(CONF_PRICE_LEVEL, description=sug(CONF_PRICE_LEVEL)): ent("sensor"),
         vol.Optional(CONF_NOTIFY, description=sug(CONF_NOTIFY)): selector.TextSelector(),
+        vol.Optional(CONF_PRESENCE, description=sug(CONF_PRESENCE)): selector.EntitySelector(
+            selector.EntitySelectorConfig(domain=["input_boolean", "binary_sensor", "group", "person", "zone"])),
+        vol.Optional(CONF_PRICE_SERVICE, description={"suggested_value": defaults.get(CONF_PRICE_SERVICE, "tibber.get_prices")}):
+            selector.TextSelector(),
     }
 
 
@@ -72,4 +77,10 @@ class DeWarmteOptionsFlow(config_entries.OptionsFlow):
         for key, (lo, hi, step, _nl, _en) in SETTING_FIELDS.items():
             schema[vol.Required(key, default=getattr(defaults, key))] = selector.NumberSelector(
                 selector.NumberSelectorConfig(min=lo, max=hi, step=step, mode=selector.NumberSelectorMode.BOX))
+        plan = PlanSettings.from_dict(current)
+        for key, (lo, hi, step, _nl, _en) in PLAN_FIELDS.items():
+            schema[vol.Required(key, default=getattr(plan, key))] = selector.NumberSelector(
+                selector.NumberSelectorConfig(min=lo, max=hi, step=step, mode=selector.NumberSelectorMode.BOX))
+        for key in PLAN_TIMES:
+            schema[vol.Required(key, default=getattr(plan, key))] = selector.TextSelector()
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
