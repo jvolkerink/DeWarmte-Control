@@ -625,7 +625,11 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         for ent in self.cfg.get(CONF_ROOMS, []):
             st = self.hass.states.get(ent)
             if st is None or st.state in ("unavailable", "unknown", "off"):
-                rooms[ent] = {"status": "niet beschikbaar"}
+                rooms[ent] = {"status": "uit" if st is not None and st.state == "off" else "niet beschikbaar"}
+                # Kamer uit: vergeet ons laatste doel, anders lijkt het doel na weer aanzetten (vaak 7 °C)
+                # een handmatige wijziging en blijft de kamer tot 3 uur ongestuurd.
+                p.last_written.pop(ent, None)
+                p.override_until.pop(ent, None)
                 continue
             a = st.attributes
             cur_t, valve = _f(a.get("current_temperature")), _f(a.get("valve_open_percent"))
