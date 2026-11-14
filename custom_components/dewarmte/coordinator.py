@@ -504,7 +504,8 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         ao_code = f"code {v.get('fault_code')}/{v.get('subfault_code')}"
         pt_code = ", ".join(f"{k[-1]}: {int(x)}" for k, x in pt_err.items() if x)
         events = self.alerts.update(time.monotonic(), bool(status.get(1, {}).get("ok")), v.get("fault_active"),
-                                    ao_code, pt_fault, pt_code or "–", [r for r in rows if r["id"] not in excl])
+                                    ao_code, pt_fault, pt_code or "–", [r for r in rows if r["id"] not in excl],
+                                    {"AO": v.get("ao_hm_error"), "T": v.get("pt_hm_error")})
         for kind, text in events:
             title = "DeWarmte: hersteld" if kind == "hersteld" else "DeWarmte: let op"
             self.last_alerts = (self.last_alerts + [{"tijd": time.strftime("%d-%m %H:%M"), "soort": kind,

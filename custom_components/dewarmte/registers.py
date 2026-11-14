@@ -168,7 +168,19 @@ def decode_all(store: dict[tuple[int, int], tuple[int, float]], now: float) -> d
     out = {reg.key: decode(reg, per_slave.get(reg.slave, {})) for reg in REGS}
     out["raw"] = decode_raw(per_slave)
     # afgeleide waarden
+    # Warmtemeter met foutcode (bijv. 128 = geen ultrasoon signaal, vaak lucht in de leiding): flow en
+    # vermogen zijn dan 0 maar niet echt. Liever 'onbekend' dan een valse 0.
+    for _p in ("ao", "pt"):
+        err = out.get(f"{_p}_hm_error")
+        if err:
+            for k in ("flow", "kw"):
+                if f"{_p}_hm_{k}" in out:
+                    out[f"{_p}_hm_{k}"] = None
     out["flow_ao"] = out.get("ao_hm_flow")
+    # Circulatiepomp: relaisbit van de SunRain zelf; warmtemeter alleen als reserve.
+    r1 = out.get("relay_1")
+    out["circulation_ao"] = bit(r1, 6) if r1 is not None else (
+        None if out["flow_ao"] is None else out["flow_ao"] > 1.0)
     out["t_ambient_sun"] = out.get("t_ambient")
     out["fault_active"] = None
     fc, sf = out.get("fault_code"), out.get("subfault_code")

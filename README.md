@@ -196,3 +196,8 @@ Alleen in servicemodus. Tijdens het ontluchten schrijft de regeling niets naar p
 niet binnen 2 minuten, of duurt het langer dan 30 minuten, dan zet de integratie de bit zelf terug. Zet de SunRain
 de bit zelf uit, dan is het programma klaar. Ook: een kamer die uit staat telt na aanzetten niet meer als
 handmatige wijziging.
+
+## Nieuw in 3.5.4: warmtemeter-fout ≠ geen debiet
+Meldt een warmtemeter een foutcode (bijv. 128: geen ultrasoon meetsignaal, meestal lucht), dan zijn debiet en warmte
+"onbekend" in plaats van 0, en telt de COP niet mee. *Circulatie pomp AO* volgt nu de pomprelais-bit van de SunRain
+(reg 25 bit 6) in plaats van het debiet. Duurt de meterfout langer dan 10 minuten, dan komt er een melding.

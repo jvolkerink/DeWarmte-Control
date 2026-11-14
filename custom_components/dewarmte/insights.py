@@ -80,7 +80,8 @@ class Alerts:
                 self._clear.pop(key, None)
 
     def update(self, now: float, critical_ok: bool, ao_fault: bool | None, ao_code: str,
-               pt_fault: bool | None, pt_code: str, rooms: list[dict]) -> list[tuple[str, str]]:
+               pt_fault: bool | None, pt_code: str, rooms: list[dict],
+               hm_errors: dict | None = None) -> list[tuple[str, str]]:
         """rooms: [{"id", "name", "current", "target", "heating"}] - geeft [(soort, tekst)] terug."""
         s, out = self.s, []
         self._eval("modbus", not critical_ok, s.modbus_min * 60, now,
@@ -90,6 +91,11 @@ class Alerts:
                    f"Pomp AO meldt een storing ({ao_code}).", "Storing pomp AO is opgeheven.", out)
         self._eval("fault_pt", bool(pt_fault), s.fault_min * 60, now,
                    f"Pomp T meldt een storing ({pt_code}).", "Storing Pomp T is opgeheven.", out)
+        for name, code in (hm_errors or {}).items():
+            self._eval(f"hm:{name}", bool(code), 10 * 60, now,
+                       f"Warmtemeter {name} meldt foutcode {code} (128 = geen meetsignaal, meestal lucht in de leiding). "
+                       "Debiet en warmte zijn zolang onbekend; overweeg te ontluchten.",
+                       f"Warmtemeter {name} meet weer normaal.", out)
         for r in rooms:
             key = f"cold:{r['id']}"
             cur, tgt = r.get("current"), r.get("target")

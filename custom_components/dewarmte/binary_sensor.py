@@ -39,7 +39,7 @@ BINARIES: tuple[DWBinary, ...] = (
     DWBinary(key="dhw_recovery", name="Tapwater onder minimum", device_class=BinarySensorDeviceClass.PROBLEM, value_fn=dec("dhw_recovery")),
     DWBinary(key="legionella", name="Legionella-waarschuwing", device_class=BinarySensorDeviceClass.PROBLEM, value_fn=dec("legionella_warning")),
     DWBinary(key="circulation_ao", name="Circulatie pomp AO", device_class=BinarySensorDeviceClass.RUNNING,
-             value_fn=lambda d: None if d["v"].get("ao_hm_flow") is None else d["v"]["ao_hm_flow"] > 1.0),
+             value_fn=dec("circulation_ao")),
     DWBinary(key="pomp_t_running", name="Pomp T actief", device_class=BinarySensorDeviceClass.RUNNING,
              value_fn=lambda d: None if d["v"].get("pt_pm_w") is None else d["v"]["pt_pm_w"] >= 100),
     DWBinary(key="disinfecting", name="Desinfectie actief", device_class=BinarySensorDeviceClass.RUNNING,
