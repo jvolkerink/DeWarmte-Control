@@ -10,7 +10,8 @@ from .sensor import main_device
 
 async def async_setup_entry(hass, entry, async_add_entities):
     c = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([ReportButton(c, entry), DisinfectStart(c, entry), DisinfectStop(c, entry), WeekButton(c, entry)])
+    async_add_entities([ReportButton(c, entry), DisinfectStart(c, entry), DisinfectStop(c, entry), WeekButton(c, entry),
+                        VentStart(c, entry), VentStop(c, entry)])
 
 
 class ReportButton(CoordinatorEntity, ButtonEntity):
@@ -69,3 +70,33 @@ class WeekButton(CoordinatorEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         await self.coordinator.async_send_week_report(reset=False)
+
+
+class VentStart(CoordinatorEntity, ButtonEntity):
+    """Watersysteem ontluchten (SunRain 816 bit 4). Alleen in servicemodus."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Watersysteem ontluchten"
+    _attr_icon = "mdi:air-filter"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_vent_start"
+        self._attr_device_info = main_device(entry)
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_start_vent()
+
+
+class VentStop(CoordinatorEntity, ButtonEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Ontluchten stoppen"
+    _attr_icon = "mdi:stop-circle-outline"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_vent_stop"
+        self._attr_device_info = main_device(entry)
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_stop_vent()

@@ -187,3 +187,12 @@ dure ochtend leek daardoor "gemiddeld", terwijl er over een paar uur een goedkoo
 uur vergeleken met het goedkoopste en het duurste uurblok dat binnen W + 1 uur (3–6 u) begint:
 `offset = gain × ((duurst − nu) + (goedkoopst − nu)) / (2 × spreiding)`, begrensd op +1,5 / −1 K.
 Komt er straks een dal: nu laten zakken. Komt er straks een piek: nu voorverwarmen.
+
+## Nieuw in 3.5.3: watersysteem ontluchten vanuit HA
+Knoppen **Watersysteem ontluchten** en **Ontluchten stoppen** (tabblad Service). Zet SunRain-register 816 bit 4
+("System Emptying mode", 排空 = ontluchten) via lezen-aanpassen-schrijven: het register wordt vers gelezen en alleen
+bit 4 verandert; alle andere bits (o.a. fabrieksinstellingen, koudemiddel terugwinnen) zijn hard geblokkeerd.
+Alleen in servicemodus. Tijdens het ontluchten schrijft de regeling niets naar pomp AO. Bevestigt de SunRain de bit
+niet binnen 2 minuten, of duurt het langer dan 30 minuten, dan zet de integratie de bit zelf terug. Zet de SunRain
+de bit zelf uit, dan is het programma klaar. Ook: een kamer die uit staat telt na aanzetten niet meer als
+handmatige wijziging.

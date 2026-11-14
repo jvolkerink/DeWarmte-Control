@@ -36,6 +36,27 @@ for _s, _a, _b, _w, _sc, _sg, _n, _u, _wr, _lo, _hi in PARAMS:
             SERVICE[(_s, _a)] = (-50, 100) if _sg else (0, 100)
 
 
+# Commando-bits: alleen deze bits mogen ooit omgezet worden, en alleen via lezen-aanpassen-schrijven,
+# zodat de andere bits van het register blijven zoals ze zijn. 816 bevat ook o.a. "fabrieksinstellingen"
+# (bit 13) en "koudemiddel terugwinnen" (bit 5): die blijven onaanraakbaar.
+BIT_COMMANDS: dict[tuple[int, int], int] = {
+    (1, 816): 1 << 4,     # Crew Control bit 4 "System Emptying mode" (排空) = watersysteem ontluchten
+}
+
+
+def bit_write_value(slave: int, reg: int, current: int, mask: int, on: bool) -> int:
+    """Nieuwe registerwaarde; weigert alles wat buiten de toegestane bits zou veranderen."""
+    allowed = BIT_COMMANDS.get((slave, reg), 0)
+    if not mask or mask & ~allowed:
+        raise ValueError(f"bits {mask:#06x} van {slave}/{reg} zijn niet schrijfbaar")
+    if not 0 <= current <= 0xFFFF:
+        raise ValueError("ongeldige huidige waarde")
+    new = (current | mask) if on else (current & ~mask)
+    if (new ^ current) & ~allowed:
+        raise ValueError("zou andere bits veranderen")
+    return new
+
+
 @dataclass(frozen=True)
 class Budget:
     min_gap_min: float

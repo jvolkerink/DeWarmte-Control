@@ -126,6 +126,7 @@ EXTRA: tuple[DWSensor, ...] = (
     DWSensor(key="plan_offset", name="Prijs-offset kamers", icon="mdi:cash-clock", state_class=M,
              native_unit_of_measurement=C, value_fn=lambda d: d["c"].planner.offset,
              attrs_fn=lambda d: d["c"].plan_info()),
+    DWSensor(key="vent", name="Ontluchten", icon="mdi:air-filter", value_fn=lambda d: d["c"].vent_text()),
     DWSensor(key="disinfection", name="Desinfectie", icon="mdi:bacteria-outline", value_fn=lambda d: d["c"].disinfect_text(),
              attrs_fn=lambda d: d["c"].disinfect or {}),
     DWSensor(key="week_report", name="Weekrapport", icon="mdi:calendar-week",

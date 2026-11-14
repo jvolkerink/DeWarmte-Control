@@ -232,7 +232,15 @@ def build(r: Resolve, rooms: list[str], price_entity: str | None = None) -> dict
              "Beveiligingen (druk, ontdooien, compressor) alleen wijzigen als je weet wat je doet. "
              "Registers gemarkeerd met *door regeling beheerd* worden door de regeling overschreven "
              "zolang *Regeling actief* aan staat."},
-            tile(r("switch", "service_mode"), "Servicemodus", tap_action={"action": "toggle"})]}]
+            tile(r("switch", "service_mode"), "Servicemodus", tap_action={"action": "toggle"})]},
+        {"type": "vertical-stack", "cards": [
+            {"type": "custom:mushroom-title-card", "title": "Watersysteem ontluchten",
+             "subtitle": "SunRain 816 bit 4, alleen in servicemodus, max 30 min. De regeling laat pomp AO zolang met rust."},
+            tile(s("vent"), "Status"),
+            {"type": "horizontal-stack", "cards": [
+                _press(r("button", "vent_start"), "Start", "mdi:air-filter",
+                       "Watersysteem ontluchten starten? De circulatiepomp gaat aan/uit pulseren."),
+                _press(r("button", "vent_stop"), "Stop", "mdi:stop-circle-outline")]}]}]
     for title, slave, lo, hi in SERVICE_GROUPS:
         ents = [r("number", f"n{slave}_{a}") for (sl, a) in sorted(SERVICE) if sl == slave and lo <= a <= hi]
         if ents:

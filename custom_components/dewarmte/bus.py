@@ -143,6 +143,22 @@ class ModbusBus:
         frame = await self._transact(request, (slave, 6, 8))
         parse_write_response(frame, request)
 
+    async def write_bits(self, slave: int, addr: int, mask: int, on: bool) -> tuple[int, int]:
+        """Lezen-aanpassen-schrijven van toegestane commando-bits (writes.BIT_COMMANDS).
+        Leest het register vers uit, verandert alleen `mask` en schrijft terug. Geeft (oud, nieuw)."""
+        from .writes import bit_write_value  # noqa: PLC0415
+        current = (await self.read_holding(slave, addr, 1))[0]
+        try:
+            new = bit_write_value(slave, addr, current, mask, on)
+        except ValueError as err:
+            raise ModbusError(f"schrijven geweigerd: {err}") from err
+        if new == current:
+            return current, new
+        request = build_write_request(slave, addr, new)
+        frame = await self._transact(request, (slave, 6, 8))
+        parse_write_response(frame, request)
+        return current, new
+
     async def _transact(self, request: bytes, expect: tuple[int, int, int]) -> bytes:
         slave = expect[0]
         async with self._lock:

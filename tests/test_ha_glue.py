@@ -204,6 +204,24 @@ async def main():
     assert os.path.exists("/tmp/dw_obs_test/servicelog.csv")
     c.service_until = time.monotonic() - 1; await c._async_update_data(); assert not c.service_mode
 
+    # ---- watersysteem ontluchten: alleen 816 bit 4, lezen-aanpassen-schrijven
+    SUN[816] = 0x0400                                       # bit 10 'allow backwater' staat aan
+    try:
+        await c.async_start_vent(); assert False, "zonder servicemodus mag niets"
+    except HAErr: pass
+    c.set_service_mode(True)
+    n769 = sum(1 for w_ in writes if w_[:2] == (1, 769))
+    await c.async_start_vent()
+    assert writes[-1] == (1, 816, 0x0410) and c.vent, writes[-1]
+    SUN[769] = 45                                           # regeling zou 769 willen corrigeren...
+    await c._async_update_data(); assert c.vent["seen"]
+    assert sum(1 for w_ in writes if w_[:2] == (1, 769)) == n769   # ...maar laat pomp AO met rust
+    SUN[816] = 0x0400                                       # SunRain is klaar en zet de bit zelf terug
+    await c._async_update_data(); assert c.vent is None and "klaar" in notes[-1][1], notes[-1]
+    SUN[816] = 0x0400; await c.async_start_vent(); c.vent["start"] -= 31 * 60
+    await c._async_update_data(); assert c.vent is None and writes[-1] == (1, 816, 0x0400)
+    SUN[769] = 28; c.service_until = time.monotonic() - 1
+
     # ---- desinfectie (alleen warmtepomp)
     PT[10], PT[11] = 62, 20
     for st in c._sched.values(): st["next"] = 0.0          # instellingen direct opnieuw lezen
@@ -253,7 +271,7 @@ async def main():
     # ---- dashboard: elke verwijzing moet naar een echte entiteit wijzen
     ids = {("sensor", d.key) for d in sens.SENSORS + sens.EXTRA} | {("binary_sensor", d.key) for d in binm.BINARIES}
     ids |= {("sensor", x.key) for x in regs.RAW if not isinstance(x.bit, int)} | {("binary_sensor", x.key) for x in regs.RAW if isinstance(x.bit, int)}
-    ids |= {("switch", "control"), ("switch", "service_mode"), ("switch", "plan"), ("button", "report_now"), ("button", "disinfect_start"), ("button", "disinfect_stop"), ("button", "week_now")}
+    ids |= {("switch", "control"), ("switch", "service_mode"), ("switch", "plan"), ("button", "report_now"), ("button", "disinfect_start"), ("button", "disinfect_stop"), ("button", "week_now"), ("button", "vent_start"), ("button", "vent_stop")}
     ids |= {("number", f"n{k[0]}_{k[1]}") for k in load("writes").SERVICE}
     bad = []
     def resolve(platform, key):

@@ -445,6 +445,20 @@ def test_week_stats_savings_and_comfort():
     assert abs(data["kosten"] - 0.10) < 0.01 and data["besparing"] > 0.14, data
     assert "bespaard" in text
 
+def test_bit_command_only_touches_bit4_of_816():
+    w = load("writes")
+    assert w.bit_write_value(1, 816, 0x0400, 1 << 4, True) == 0x0410        # bit 10 blijft staan
+    assert w.bit_write_value(1, 816, 0x0410, 1 << 4, False) == 0x0400
+    for bad in (1 << 13, 1 << 5, 0x0030):
+        try:
+            w.bit_write_value(1, 816, 0x0400, bad, True); raise SystemExit("mocht niet")
+        except ValueError:
+            pass
+    try:
+        w.bit_write_value(1, 817, 0, 1, True); raise SystemExit("mocht niet")
+    except ValueError:
+        pass
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

@@ -70,6 +70,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         self._last_decision: dict = {}
         self.service_until = 0.0             # monotonic; servicemodus aan zolang now < service_until
         self.disinfect: dict | None = None   # actieve handmatige desinfectie
+        self.vent: dict | None = None        # actief ontluchtprogramma (816 bit 4)
         self.planner = PricePlanner(PlanSettings.from_dict(self.cfg), None, self.cfg.get(CONF_SCHEDULES))
         self.plan_enabled = True
         self._last_plan = 0.0
@@ -181,6 +182,8 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         for p in decision["planned_writes"]:
             if self.disinfect and (p["slave"], p["register"]) == (2, 6):
                 continue                                                   # desinfectie heeft voorrang
+            if self.vent and p["slave"] == 1:
+                continue                                                   # ontluchten: pomp AO met rust laten
             slave, reg, value = p["slave"], p["register"], int(p["value"])
             why = self.guard.check(slave, reg, value, now)
             if why:
@@ -284,6 +287,81 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         self.async_update_listeners()
         if not item["ok"]:
             raise HomeAssistantError(f"Schrijven mislukt: {item['error']}")
+
+    # ------------------------------------------------------------ watersysteem ontluchten (816 bit 4)
+    VENT_MASK = 1 << 4
+    VENT_MAX_MIN = 30
+
+    async def _vent_write(self, on: bool, why: str) -> dict:
+        item = {"time": time.strftime("%H:%M"), "name": "watersysteem ontluchten " + ("start" if on else "stop"),
+                "register": "1/816 bit 4", "old": "?", "new": "aan" if on else "uit", "why": why,
+                "ok": False, "error": None}
+        try:
+            old, new = await self.bus.write_bits(1, 816, self.VENT_MASK, on)
+            item.update(ok=True, old=f"{old:#06x}", new=f"{new:#06x}")
+            self._raw[(1, 816)] = (new, time.monotonic())
+            for key, st in self._sched.items():
+                if key[0] == 1 and key[1] <= 816 < key[1] + key[2]:
+                    st["next"] = 0.0
+        except ModbusError as err:
+            item["error"] = str(err)
+        self.report.action(item)
+        self.actions = (self.actions + [item])[-30:]
+        _LOGGER.warning("Ontluchten %s: %s", "start" if on else "stop", "OK" if item["ok"] else item["error"])
+        return item
+
+    async def async_start_vent(self) -> None:
+        from homeassistant.exceptions import HomeAssistantError  # noqa: PLC0415
+        if self.vent:
+            return
+        if not self.service_mode:
+            raise HomeAssistantError("Zet eerst de schakelaar 'Servicemodus' aan.")
+        if not self._status().get(1, {}).get("ok"):
+            raise HomeAssistantError("Geen verse Modbus-data van de SunRain; ontluchten niet gestart.")
+        item = await self._vent_write(True, f"handmatig (max {self.VENT_MAX_MIN} min)")
+        if not item["ok"]:
+            raise HomeAssistantError(f"Ontluchten starten mislukt: {item['error']}")
+        self.vent = {"start": time.monotonic(), "started": time.strftime("%H:%M"), "seen": False}
+        await self._notify_both("DeWarmte: ontluchten gestart",
+                                f"Watersysteem ontluchten gestart (816 bit 4, {item['old']} → {item['new']}). "
+                                f"De regeling laat pomp AO zolang met rust; uiterlijk na {self.VENT_MAX_MIN} min stopt het.")
+        self.async_update_listeners()
+
+    async def async_stop_vent(self, reason: str = "handmatig gestopt") -> None:
+        v, self.vent = self.vent, None
+        item = await self._vent_write(False, reason)
+        if v or not item["ok"]:
+            await self._notify_both("DeWarmte: ontluchten " + ("gestopt" if item["ok"] else "stoppen mislukt"),
+                                    reason if item["ok"] else f"{reason}; fout: {item['error']}")
+        self.async_update_listeners()
+
+    async def _vent_step(self) -> None:
+        v = self.vent
+        if not v:
+            return
+        for key, st in self._sched.items():                 # tijdens ontluchten 816 elke cyclus lezen
+            if key[0] == 1 and key[1] <= 816 < key[1] + key[2]:
+                st["next"] = 0.0
+        raw = self._raw.get((1, 816))
+        bit = None if raw is None or raw[1] < v["start"] else bool(raw[0] & self.VENT_MASK)
+        age = time.monotonic() - v["start"]
+        if bit:
+            v["seen"] = True
+        if v["seen"] and bit is False:
+            self.vent = None
+            await self._notify_both("DeWarmte: ontluchten klaar",
+                                    f"De SunRain heeft het ontluchten na {age / 60:.0f} min zelf beëindigd.")
+            self.async_update_listeners()
+        elif not v["seen"] and age > 120:
+            await self.async_stop_vent("bit 4 niet bevestigd door de SunRain binnen 2 min")
+        elif age > self.VENT_MAX_MIN * 60:
+            await self.async_stop_vent(f"maximale duur {self.VENT_MAX_MIN} min bereikt")
+
+    def vent_text(self) -> str:
+        v = self.vent
+        if not v:
+            return "uit"
+        return f"bezig sinds {v['started']}" + ("" if v["seen"] else " (wacht op bevestiging)")
 
     # ------------------------------------------------------------ handmatige desinfectie
     async def _auto_disinfection(self, decision: dict) -> None:
@@ -677,6 +755,7 @@ class DeWarmteCoordinator(DataUpdateCoordinator[dict]):
         decision = self.engine.update(self._inputs(values, status))
         await self._execute(decision)
         await self._disinfect_step(values)
+        await self._vent_step()
         await self._auto_disinfection(decision)
         await self._insights_step(values, decision, status)
         if self.service_until and not self.service_mode:
