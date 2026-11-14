@@ -180,3 +180,10 @@ Bij elke start luistert de integratie 15 seconden naar `homeassistant/#` en wist
 van de oude DeWarmte-app (unique_id `dewarmte_…` met availability onder `dewarmte/`), plus hun state-topics.
 Andere MQTT-apparaten worden niet aangeraakt. Daarmee verdwijnen de honderden foutmeldingen
 "Entity category 'config' is not supported" uit het logboek.
+
+## Nieuw in 3.5.2: prijsslim kijkt alleen vooruit
+De prijs-offset vergeleek het huidige uur met het gemiddelde van W uur terug én vooruit. Een duur moment ná een
+dure ochtend leek daardoor "gemiddeld", terwijl er over een paar uur een goedkoop dal komt. Nu wordt het huidige
+uur vergeleken met het goedkoopste en het duurste uurblok dat binnen W + 1 uur (3–6 u) begint:
+`offset = gain × ((duurst − nu) + (goedkoopst − nu)) / (2 × spreiding)`, begrensd op +1,5 / −1 K.
+Komt er straks een dal: nu laten zakken. Komt er straks een piek: nu voorverwarmen.

@@ -1,6 +1,6 @@
 """Constanten (geen Home Assistant-imports, zodat ze ook los te testen zijn)."""
 DOMAIN = "dewarmte"
-VERSION = "3.5.1"
+VERSION = "3.5.2"
 PLATFORMS = ["sensor", "binary_sensor", "switch", "button", "number"]
 
 CONF_UP_TOPIC = "up_topic"

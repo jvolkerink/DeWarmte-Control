@@ -181,17 +181,27 @@ class PricePlanner:
             return 0.0, "geen prijs voor nu"
         if now < 0:
             return s.band_up, "negatieve prijs: maximaal voorverwarmen"
-        w = self.window_h * 3600
-        later = self._mean(wall - w, wall + w)          # referentie: prijs rond nu (venster W terug én vooruit)
+        look = max(3.0, min(6.0, self.window_h + 1.0))
+        w = look * 3600
+        # Alleen vooruit kijken: warmte kan alleen naar later verschoven worden, niet naar vroeger.
+        # Vergelijk dit uur met het goedkoopste en het duurste uurblok dat binnen W + 1 u (3-6 u) begint.
+        blocks = []
+        t = wall - (wall % 900) + 900
+        while t <= wall + w:
+            m = self._mean(t, t + 3600)
+            if m is not None:
+                blocks.append(m)
+            t += 900
         hor = sorted(self.horizon(wall))
-        if later is None or len(hor) < 8:
+        if not blocks or len(hor) < 8:
             return 0.0, "te weinig prijsvoorspelling"
+        low, high = min(blocks), max(blocks)
         spread = max(0.05, hor[int(0.9 * (len(hor) - 1))] - hor[int(0.1 * (len(hor) - 1))])
-        raw = s.gain * (later - now) / spread
+        raw = s.gain * ((high - now) + (low - now)) / (2 * spread)
         raw = max(-s.band_down, min(s.band_up, raw))
         word = ("goedkoper dan straks: voorverwarmen" if raw >= 0.25 else
                 "duurder dan straks: iets laten zakken" if raw <= -0.25 else "ongeveer gelijk: normaal doel")
-        return raw, f"nu {now:.3f} vs. gemiddeld ±{self.window_h:.1f} u {later:.3f} €/kWh: {word}"
+        return raw, (f"nu {now:.3f}, komende {look:.0f} u {low:.3f}–{high:.3f} €/kWh: {word}")
 
     # ------------------------------------------------------------ schema
     def block(self, wall: float) -> str:
